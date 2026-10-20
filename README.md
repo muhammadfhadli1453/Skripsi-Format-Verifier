@@ -83,4 +83,10 @@ tetapi dikecualikan dari pemeriksaan tanda baca.
 
 Parser PDF memakai [mupdf](https://www.npmjs.com/package/mupdf) (WebAssembly), berlisensi **AGPL-3.0**.
 Jika aplikasi ini di-deploy sebagai layanan publik, kode sumbernya harus tersedia bagi pengguna (atau gunakan
-lisensi komersial Artifex). Dokumen panduan di `reference/` adalah milik Prodi Informatika Universitas Khairun.
+lisensi komersial Artifex).
+
+Dokumen di `reference/`:
+- `FORMAT PENULISAN UPDATE 012424_202301.{docx,pdf}` — format penulisan Prodi Informatika (acuan utama aturan).
+- `official format.pdf` — Panduan Penulisan Tugas Akhir (PPTA) Universitas Khairun, November 2023 (tingkat universitas).
+
+Keduanya milik Universitas Khairun. Rekaman/transkrip tutorial (`reference/tutorial*`) tidak ikut repo.
