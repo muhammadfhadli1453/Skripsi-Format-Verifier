@@ -20,10 +20,13 @@ export function parseChapterNumber(s: string): number | undefined {
 }
 
 const HEADINGS: { kind: SectionKind; re: RegExp; label: string }[] = [
-  { kind: "pengesahan", re: /^(HALAMAN |LEMBAR )?PENGESAHAN(\s+(SKRIPSI|PROPOSAL|HASIL|KERJA PRAKTIK|LAPORAN.*|TUGAS AKHIR))?$/, label: "Lembar Pengesahan" },
-  { kind: "pernyataan", re: /^(HALAMAN |LEMBAR |SURAT )?PERNYATAAN( KEASLIAN.*| ORISINALITAS.*)?$/, label: "Pernyataan Keaslian" },
+  // "LEMBARAN PENGESAHAN [UJIAN PROPOSAL|HASIL|TUTUP]" is the PPTA wording (Lampiran 11a–12)
+  { kind: "pengesahan", re: /^(HALAMAN |LEMBAR(AN)? )?PENGESAHAN(\s+(UJIAN\s+(PROPOSAL|HASIL|TUTUP)(\s+SKRIPSI)?|SKRIPSI|PROPOSAL|HASIL|KERJA PRAKTIK|LAPORAN.*|TUGAS AKHIR))?$/, label: "Lembar Pengesahan" },
+  { kind: "pernyataan", re: /^(HALAMAN |LEMBAR |SURAT )?PERNYATAAN( KEASLIAN.*| ORISINALITAS.*| DAN PELIMPAHAN HAK CIPTA.*)?$/, label: "Pernyataan Keaslian" },
   { kind: "persembahan", re: /^((HALAMAN |LEMBAR )?PERSEMBAHAN|MOTTO( DAN PERSEMBAHAN)?)$/, label: "Halaman Persembahan" },
-  { kind: "kata-pengantar", re: /^KATA PENGANTAR$/, label: "Kata Pengantar" },
+  { kind: "hak-cipta", re: /^(HALAMAN |LEMBAR )?HAK CIPTA$|^©/, label: "Halaman Hak Cipta" },
+  { kind: "tim-penguji", re: /^(HALAMAN |LEMBAR )?(TIM|KOMISI) PENGUJI$/, label: "Halaman Tim Penguji" },
+  { kind: "kata-pengantar", re: /^(KATA PENGANTAR|PRAKATA)$/, label: "Kata Pengantar" },
   { kind: "daftar-isi", re: /^DAFTAR ISI$/, label: "Daftar Isi" },
   { kind: "daftar-gambar", re: /^DAFTAR GAMBAR$/, label: "Daftar Gambar" },
   { kind: "daftar-tabel", re: /^DAFTAR TABEL$/, label: "Daftar Tabel" },
@@ -32,6 +35,7 @@ const HEADINGS: { kind: SectionKind; re: RegExp; label: string }[] = [
   { kind: "abstract", re: /^ABSTRACT$/, label: "Abstract" },
   { kind: "daftar-pustaka", re: /^DAFTAR (PUSTAKA|REFERENSI)$/, label: "Daftar Pustaka" },
   { kind: "lampiran", re: /^LAMPIRAN(\s+.*)?$/, label: "Lampiran" },
+  { kind: "riwayat-hidup", re: /^RIWAYAT HIDUP$/, label: "Riwayat Hidup" },
 ];
 const BAB_RE = /^BAB\s+([IVXLC]+|\d+)\b\s*[.:\-–]?\s*(.*)$/;
 
@@ -103,6 +107,8 @@ export function detectSections(doc: NormalizedDoc): LogicalSection[] {
         for (const h of HEADINGS) {
           if (!h.re.test(text)) continue;
           if (h.kind === "lampiran" && !seenBab) continue;
+          if ((h.kind === "tim-penguji" || h.kind === "hak-cipta") && (!newPage || current.kind === "pengesahan")) continue;
+          if (h.kind === "riwayat-hidup" && !seenBab) continue;
           if (h.kind === "lampiran" && current.kind === "lampiran") continue; // "Lampiran 2" etc.
           if (h.kind === "pengesahan" && current.kind === "pengesahan" && i - current.firstParaIndex < 3) continue;
           // the same heading repeated right after (e.g. docx line break duplicates) is ignored

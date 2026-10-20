@@ -133,6 +133,9 @@ export function ReportView({ report }: { report: VerifyReport }) {
       {/* capabilities */}
       <details className="rounded-2xl border border-border bg-card p-5 text-sm">
         <summary className="cursor-pointer font-medium">Cakupan & keterbatasan pemeriksaan ({report.source.toUpperCase()})</summary>
+        <p className="mt-3 text-xs text-muted">
+          Aturan bertanda <span className="font-semibold">PPTA</span> berasal dari Panduan Penulisan Tugas Akhir Universitas Khairun (2023), panduan terbaru. PPTA diikuti bila mengatur dokumen yang sama (proposal/skripsi S1): abstrak, lembar pengesahan, pernyataan orisinalitas, urutan bagian awal skripsi, dan huruf judul gambar/tabel. Format Prodi Informatika tetap dipakai untuk hal yang tidak diatur PPTA (huruf, ukuran, spasi, margin, sampul, posisi nomor halaman) dan untuk laporan Kerja Praktik.
+        </p>
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <div>
             <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Dapat diperiksa</p>
@@ -172,6 +175,16 @@ function IssueItem({ issue }: { issue: Issue }) {
         <span className="min-w-0 flex-1">
           <span className="font-medium">{issue.title}</span>
           {issue.source === "ai" && <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent">AI</span>}
+          {issue.basis === "ppta" && (
+            <span className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-violet-800 dark:bg-violet-950/50 dark:text-violet-300" title="Aturan dari Panduan Penulisan Tugas Akhir (PPTA) Universitas Khairun">
+              PPTA
+            </span>
+          )}
+          {issue.basis === "keduanya" && (
+            <span className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-violet-800 dark:bg-violet-950/50 dark:text-violet-300" title="Diatur oleh format prodi dan PPTA universitas">
+              Prodi + PPTA
+            </span>
+          )}
           <span className="block text-xs text-muted">
             <span className="font-mono">{issue.id}</span>
             {loc && <> · {loc}</>}

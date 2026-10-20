@@ -163,6 +163,9 @@ export type SectionKind =
   | "daftar-lampiran"
   | "abstrak"
   | "abstract"
+  | "hak-cipta"
+  | "tim-penguji"
+  | "riwayat-hidup"
   | "bab"
   | "daftar-pustaka"
   | "lampiran"
@@ -207,6 +210,8 @@ export interface Issue {
   /** additional occurrences folded into this issue */
   occurrences?: IssueLocation[];
   source?: "rule" | "ai";
+  /** which guideline the rule comes from (undefined = Prodi Informatika format) */
+  basis?: "prodi" | "ppta" | "keduanya";
 }
 
 export interface VerifyReport {

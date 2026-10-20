@@ -62,6 +62,56 @@ src/components/*            UI unggah + laporan
 | Nomor halaman | romawi kecil footer tengah sebelum BAB I; BAB I mulai dari 1; halaman pertama BAB footer tengah, lanjutan header kanan; berurutan; Arial Narrow 12 (pdf: terbaca; docx: section break, Different First Page, field PAGE, format) |
 | Daftar Pustaka | urut alfabet, hanging indent, spasi 1,5, tahun ada, bukan kapital semua, sitasi ↔ referensi saling ada |
 
+### Dua acuan: PPTA Universitas Khairun dan format Prodi Informatika
+
+`reference/official format.pdf` (Panduan Penulisan Tugas Akhir/PPTA, Nov 2023) adalah panduan **terbaru** dan
+diikuti bila mengatur dokumen yang sama dengan format prodi. Setiap bentrokan diperiksa ruang lingkupnya, karena
+banyak bagian PPTA ditulis untuk tesis, disertasi, laporan akhir vokasi, atau draf jurnal, bukan untuk skripsi S1.
+Temuan berlabel **PPTA** (`issue.basis = "ppta"`) atau **Prodi + PPTA** bila keduanya sepakat.
+
+**Bentrokan nyata (dokumen sama) → PPTA diikuti**
+
+| Hal | Format prodi (lama) | PPTA (diikuti) | Berlaku untuk |
+|---|---|---|---|
+| Kepala abstrak | Judul kapital di tengah, nama + nomor afiliasi, alamat, e-mail (gaya artikel jurnal) | `NAMA MAHASISWA. Judul. Dibimbing oleh NAMA PEMBIMBING …` — kapital, tanpa NPM, tanpa gelar (3.1.4, Lamp. 9) | Skripsi |
+| Isi abstrak | 150–250 kata | 1 paragraf, 1 spasi; maks. 100 kata (3.1.4) **atau** 500 kata (Lamp. 9) — PPTA tidak konsisten, >500 = peringatan, 101–500 = info | Skripsi |
+| Kata kunci | maks. 6 | maks. 5, urut alfabet (3.1.4) | Skripsi |
+| Nomor halaman abstrak | Romawi dicetak | Dihitung i, tidak dicetak (3.1.4) | Skripsi |
+| Urutan bagian awal | Sampul, Pengesahan, Pernyataan, Persembahan, Kata Pengantar, Daftar Isi, Daftar Gambar, Daftar Tabel, Abstrak | Sampul, Pernyataan, Abstrak/Abstract, Hak Cipta, Tim Penguji, Pengesahan, Kata Pengantar, Daftar Isi, Daftar Tabel, Daftar Gambar, Daftar Lampiran (3.1) | Skripsi |
+| Halaman wajib tambahan | — | Hak Cipta, Tim Penguji, Riwayat Hidup, Abstract (Inggris) (3.1, 3.3) | Skripsi |
+| Lembar pengesahan | "… ini telah disahkan", Tim Penguji, Mengetahui/Menyetujui | Lembaran Pengesahan: Nama, NPM, Judul, Program Studi, Komisi Pembimbing, (skripsi: Komisi Penguji, Dekan), Koordinator Prodi, Tanggal Ujian (Lamp. 11a, 12) | Proposal, Skripsi |
+| Pernyataan | Judul Capitalize Each Word; Nama, NPM, Fakultas, Jurusan | Pernyataan Orisinalitas: judul KAPITAL, pernyataan plagiasi, Nama/NIM/PS (Lamp. 8) | Skripsi |
+| Huruf judul gambar/tabel | Huruf Awal Setiap Kata Kapital | Hanya huruf pertama kapital, kecuali nama/istilah khusus (6.1.1 a.4, 6.2) | Semua |
+| Daftar Gambar/Tabel | Selalu ada | Hanya jika lebih dari satu gambar/tabel (3.1.12) | Semua |
+
+**Bukan bentrokan (lain dokumen / PPTA tidak mengatur) → format prodi tetap**
+
+| Hal | Alasan |
+|---|---|
+| Huruf Times New Roman | Hanya pada templat sampul tesis/disertasi, sampul skripsi fakultas lain (Hukum, Perikanan, FKIP), dan halaman sampul/judul; PPTA tidak mengatur huruf isi naskah. |
+| Tata letak sampul, logo | PPTA menyerahkan sampul ke peraturan fakultas (3.1.1); tidak ada templat Fakultas Teknik. Logo 4 × 4 cm vs 4,15 × 4 cm masih dalam toleransi. |
+| Margin, spasi isi, posisi nomor halaman BAB | Tidak diatur PPTA. |
+| Format Daftar Isi tanpa "BAB" | Lampiran 16 khusus tesis dan disertasi. |
+| Ringkasan/Summary | Untuk laporan akhir, tesis, dan disertasi (3.1.5), bukan skripsi. |
+| Urutan ucapan terima kasih | Lampiran 15 hanya contoh (bertuliskan tesis/disertasi); urutan prodi tetap. |
+| Sitasi `(Nama, 2020)` vs `(Nama 2020)` | PPTA menetapkan gaya APA (berkoma) tetapi sebagian contohnya tanpa koma; hanya ketidakkonsistenan yang ditandai. |
+| Format entri daftar pustaka | PPTA menyebut APA tetapi contohnya gaya CSE; format prodi juga campuran; tidak dipaksakan. |
+| Draf jurnal & poster (7.3) | Dokumen luaran terpisah, bukan naskah skripsi. |
+| Laporan Kerja Praktik | Tidak dicakup PPTA. |
+
+**Aturan tambahan dari PPTA (format prodi tidak mengatur)**
+
+| Kode | Pemeriksaan | Dasar PPTA |
+|---|---|---|
+| SPELL-01 | Ejaan tidak baku (aktifitas, merubah, mempengaruhi, terimakasih, di gunakan, diantaranya, diatas, …) | 4.2.2, Tabel 4.1 |
+| CITE-01…04 | `et al.` miring; "dan" bukan "&"; beberapa sumber dalam satu kurung, dipisah `;`, urut tahun | 7.1.3 |
+| NUM-01/02/03 | Desimal koma, angka–satuan berspasi, kalimat tidak diawali angka | 5.1, 5.2 |
+| CAP-16/17 | Nomor gambar/tabel tanpa titik, judul tidak diakhiri titik | 6.1.1, 6.2 |
+| SUB-09 | Kata penghubung pada judul subbab huruf kecil | 4.2.1.2 |
+| STRUCT-04/05 | Tinjauan pustaka ≤ 10% bagian utama; penutup memuat Simpulan dan Saran (skripsi) | 3.2, 3.2.6 |
+| ABS-13/15 | Abstrak tanpa rujukan pustaka/gambar/tabel; Abstract bahasa Inggris (skripsi) | 3.1.4 |
+| REF-09/10/11 | Referensi ≤ 10 tahun, minimal 20, tanpa Wikipedia | BAB VII, 7.3 |
+
 Keterbatasan: PDF tidak menyimpan Space Before/After dan struktur tabel (hanya diestimasi); DOCX tidak
 mengetahui posisi vertikal sehingga simetri sampul dan nomor halaman hanya diperkirakan. Lihat panel
 "Cakupan & keterbatasan" pada laporan.
@@ -86,7 +136,7 @@ Jika aplikasi ini di-deploy sebagai layanan publik, kode sumbernya harus tersedi
 lisensi komersial Artifex).
 
 Dokumen di `reference/`:
-- `FORMAT PENULISAN UPDATE 012424_202301.{docx,pdf}` — format penulisan Prodi Informatika (acuan utama aturan).
-- `official format.pdf` — Panduan Penulisan Tugas Akhir (PPTA) Universitas Khairun, November 2023 (tingkat universitas).
+- `official format.pdf` — Panduan Penulisan Tugas Akhir (PPTA) Universitas Khairun, November 2023 (panduan terbaru, tingkat universitas).
+- `FORMAT PENULISAN UPDATE 012424_202301.{docx,pdf}` — format penulisan Prodi Informatika (dipakai untuk hal yang tidak diatur PPTA).
 
 Keduanya milik Universitas Khairun. Rekaman/transkrip tutorial (`reference/tutorial*`) tidak ikut repo.

@@ -1,6 +1,6 @@
 import type { RuleContext } from "./context";
 import type { LogicalSection, Para, SectionKind } from "../model";
-import { CONJUNCTIONS, dominantSize, fmtSpacing, isMostlyBold, isMostlyItalic, isUpperCase, locOf, titleCaseViolations, words } from "./util";
+import { TITLE_LOWERCASE, dominantSize, fmtSpacing, isMostlyBold, isUpperCase, locOf, snippet, words } from "./util";
 import { captionsInBody, subHeadingsInBody } from "./body";
 
 const CAT_STRUCT = "Struktur Dokumen";
@@ -10,7 +10,16 @@ const CAT_KP = "Kata Pengantar";
 const CAT_DAFTAR = "Daftar Isi / Gambar / Tabel";
 const CAT_ABSTRAK = "Abstrak";
 
-const ORDER: SectionKind[] = ["cover", "pengesahan", "pernyataan", "persembahan", "kata-pengantar", "daftar-isi", "daftar-gambar", "daftar-tabel", "daftar-lampiran", "abstrak", "abstract", "bab", "daftar-pustaka", "lampiran"];
+/** Prodi format order (proposal, KP, hasil). */
+const ORDER_PRODI: SectionKind[] = ["cover", "pengesahan", "pernyataan", "persembahan", "kata-pengantar", "daftar-isi", "daftar-gambar", "daftar-tabel", "daftar-lampiran", "abstrak", "abstract", "bab", "daftar-pustaka", "lampiran", "riwayat-hidup"];
+/**
+ * PPTA 3.1 order for final tugas akhir (laporan akhir, skripsi, tesis, disertasi): sampul, judul, pernyataan,
+ * abstrak/abstract, hak cipta, judul dalam, tim penguji, pengesahan, kata pengantar, daftar isi,
+ * daftar tabel, daftar gambar, daftar lampiran; then the main part, lampiran and riwayat hidup (3.3).
+ * The PPTA is the latest guideline, so it overrides the Prodi order for skripsi.
+ */
+const ORDER_PPTA_SKRIPSI: SectionKind[] = ["cover", "pernyataan", "abstrak", "abstract", "hak-cipta", "tim-penguji", "pengesahan", "kata-pengantar", "daftar-isi", "daftar-tabel", "daftar-gambar", "daftar-lampiran", "bab", "daftar-pustaka", "lampiran", "riwayat-hidup"];
+const ORDER_LABEL: Partial<Record<SectionKind, string>> = { cover: "Sampul", pernyataan: "Pernyataan", abstrak: "Abstrak", abstract: "Abstract", "hak-cipta": "Hak Cipta", "tim-penguji": "Tim Penguji", pengesahan: "Pengesahan", "kata-pengantar": "Kata Pengantar", "daftar-isi": "Daftar Isi", "daftar-tabel": "Daftar Tabel", "daftar-gambar": "Daftar Gambar", "daftar-lampiran": "Daftar Lampiran", persembahan: "Persembahan", bab: "BAB I…", "daftar-pustaka": "Daftar Pustaka", lampiran: "Lampiran", "riwayat-hidup": "Riwayat Hidup" };
 
 export function similarity(a: string, b: string): number {
   const norm = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
@@ -27,20 +36,26 @@ export function frontMatterRules(ctx: RuleContext) {
   const chapters = ctx.sections.filter((s) => s.kind === "bab").map((s) => s.chapter ?? 0);
 
   /* ---------- required sections ---------- */
-  const required: { kind: SectionKind; label: string; sev: "error" | "warning" }[] = [
+  const required: { kind: SectionKind; label: string; sev: "error" | "warning" | "info"; basis?: "ppta" }[] = [
     { kind: "pengesahan", label: "Lembar Pengesahan", sev: "error" },
     { kind: "kata-pengantar", label: "Kata Pengantar", sev: "error" },
     { kind: "daftar-isi", label: "Daftar Isi", sev: "error" },
-    { kind: "daftar-gambar", label: "Daftar Gambar", sev: "warning" },
-    { kind: "daftar-tabel", label: "Daftar Tabel", sev: "warning" },
     { kind: "daftar-pustaka", label: "Daftar Pustaka", sev: "error" },
   ];
+  // PPTA 3.1.12: Daftar Tabel / Daftar Gambar are written only when there is more than one table / figure
+  const caps = captionsInBody(ctx);
+  if (caps.filter((x) => x.kind === "Gambar").length > 1) required.push({ kind: "daftar-gambar", label: "Daftar Gambar", sev: "warning" });
+  if (caps.filter((x) => x.kind === "Tabel").length > 1) required.push({ kind: "daftar-tabel", label: "Daftar Tabel", sev: "warning" });
   if (docType === "skripsi") {
-    required.push({ kind: "pernyataan", label: "Lembar Pernyataan Keaslian (khusus skripsi)", sev: "error" });
+    required.push({ kind: "pernyataan", label: "Halaman Pernyataan Orisinalitas/Keaslian (khusus skripsi)", sev: "error" });
     required.push({ kind: "abstrak", label: "Abstrak (khusus skripsi)", sev: "error" });
+    // PPTA 3.1 / 3.3 pages for final tugas akhir (the Prodi format does not list them)
+    required.push({ kind: "hak-cipta", label: "Halaman Hak Cipta (PPTA 3.1.6)", sev: "warning", basis: "ppta" });
+    required.push({ kind: "tim-penguji", label: "Halaman Tim Penguji (PPTA 3.1.8)", sev: "warning", basis: "ppta" });
+    required.push({ kind: "riwayat-hidup", label: "Riwayat Hidup (PPTA 3.3.2)", sev: "warning", basis: "ppta" });
   }
   for (const r of required) {
-    if (!has(r.kind)) c.add({ id: "STRUCT-01", severity: r.sev, category: CAT_STRUCT, title: `Bagian "${r.label}" tidak ditemukan`, detail: `Judul halaman "${r.label.toUpperCase().split(" (")[0]}" tidak terdeteksi. Pastikan judul halaman ditulis kapital, rata tengah, dan berada pada baris sendiri.`, location: {} });
+    if (!has(r.kind)) c.add({ id: "STRUCT-01", severity: r.sev, category: CAT_STRUCT, title: `Bagian "${r.label}" tidak ditemukan`, detail: `Judul halaman "${r.label.toUpperCase().split(" (")[0]}" tidak terdeteksi. Pastikan judul halaman ditulis kapital, rata tengah, dan berada pada baris sendiri.`, location: {}, basis: r.basis });
   }
   const expectedChapters = docType === "proposal" ? 3 : docType === "skripsi" ? 5 : docType === "hasil" ? 4 : 0;
   if (expectedChapters) {
@@ -50,13 +65,18 @@ export function frontMatterRules(ctx: RuleContext) {
   }
 
   /* ---------- order ---------- */
+  const pptaOrder = docType === "skripsi";
+  const ORDER = pptaOrder ? ORDER_PPTA_SKRIPSI : ORDER_PRODI;
+  const orderText = ORDER.filter((k) => k !== "abstract").map((k) => ORDER_LABEL[k]).join(", ");
   let lastRank = -1;
   for (const s of ctx.sections) {
     if (s.kind === "unknown") continue;
+    if (pptaOrder && s.kind === "persembahan") continue; // not part of the PPTA list; allowed before Kata Pengantar
     const rank = ORDER.indexOf(s.kind);
+    if (rank < 0) continue;
     if (rank < lastRank && s.kind !== "bab") {
-      const prevLabel = ORDER[lastRank];
-      c.warn("STRUCT-03", CAT_STRUCT, `Urutan bagian "${s.label}" tidak sesuai`, `"${s.label}" muncul setelah bagian "${prevLabel}". Urutan panduan: Sampul, Pengesahan, Pernyataan Keaslian, Persembahan, Kata Pengantar, Daftar Isi, Daftar Gambar, Daftar Tabel, Abstrak, BAB I…, Daftar Pustaka, Lampiran.`, s.headingParaIndex !== undefined ? locOf(ctx.doc.paras[s.headingParaIndex], s.label) : {});
+      const prevLabel = ORDER_LABEL[ORDER[lastRank]] ?? ORDER[lastRank];
+      c.warn("STRUCT-03", CAT_STRUCT, `Urutan bagian "${s.label}" tidak sesuai`, `"${s.label}" muncul setelah bagian "${prevLabel}". Urutan ${pptaOrder ? "bagian awal skripsi menurut PPTA 3.1" : "panduan prodi"}: ${orderText}.`, s.headingParaIndex !== undefined ? locOf(ctx.doc.paras[s.headingParaIndex], s.label) : {}, { basis: pptaOrder ? "ppta" : undefined });
     }
     lastRank = Math.max(lastRank, rank);
   }
@@ -95,6 +115,9 @@ function pengesahan(ctx: RuleContext, s: LogicalSection) {
   const paras = ctx.parasOf(s);
   const text = paras.map((p) => p.text).join(" \n ");
   const lower = text.toLowerCase();
+  // Proposal and skripsi follow the PPTA approval pages (Lampiran 11a "Lembaran Pengesahan Ujian Proposal",
+  // Lampiran 12 "Lembaran Pengesahan" skripsi). KP is not covered by the PPTA and keeps the Prodi template.
+  if (docType === "proposal" || docType === "skripsi") return pengesahanPpta(ctx, s, paras);
   const need: { re: RegExp; label: string }[] = [
     { re: /\boleh\b/, label: "Oleh" },
     { re: /telah disahkan/, label: "… ini telah disahkan" },
@@ -114,12 +137,11 @@ function pengesahan(ctx: RuleContext, s: LogicalSection) {
     need.push({ re: /pembimbing utama/, label: "Pembimbing Utama" });
     need.push({ re: /pembimbing pendamping/, label: "Pembimbing Pendamping" });
   }
-  if (docType === "skripsi") need.push({ re: /dekan fakultas teknik/, label: "Dekan Fakultas Teknik" });
   const missing = need.filter((n) => !n.re.test(lower)).map((n) => n.label);
   const loc = paras[0] ? locOf(paras[0], s.label) : {};
-  if (missing.length) c.warn("PENGESAHAN-01", CAT_PENGESAHAN, "Komponen lembar pengesahan tidak lengkap", `Tidak ditemukan: ${missing.join(", ")}. Sesuaikan dengan contoh lembar pengesahan ${docType === "kp" ? "Kerja Praktik" : docType === "proposal" ? "Proposal" : "Skripsi"} pada panduan.`, loc);
+  if (missing.length) c.warn("PENGESAHAN-01", CAT_PENGESAHAN, "Komponen lembar pengesahan tidak lengkap", `Tidak ditemukan: ${missing.join(", ")}. Sesuaikan dengan contoh lembar pengesahan ${docType === "kp" ? "Kerja Praktik" : "naskah"} pada panduan prodi.`, loc);
   const disahkan = lower.match(/(skripsi|proposal|laporan kerja praktik|kerja praktik|hasil)\s+ini\s+telah\s+disahkan/);
-  const expectWord = docType === "skripsi" ? "skripsi" : docType === "proposal" ? "proposal" : docType === "kp" ? "laporan kerja praktik" : docType === "hasil" ? "hasil" : undefined;
+  const expectWord = docType === "kp" ? "laporan kerja praktik" : docType === "hasil" ? "hasil" : undefined;
   if (disahkan && expectWord && !disahkan[1].includes(expectWord.split(" ").pop()!))
     c.error("PENGESAHAN-02", CAT_PENGESAHAN, "Jenis naskah pada lembar pengesahan tidak sesuai sampul", `Lembar pengesahan menyebut "${disahkan[0]}" sedangkan sampul menyatakan naskah ${expectWord.toUpperCase()}.`, loc, { expected: `${capital(expectWord)} ini telah disahkan` });
   // title: first non-empty paragraph(s) before "Oleh"
@@ -134,32 +156,63 @@ function pengesahan(ctx: RuleContext, s: LogicalSection) {
   }
 }
 
+function pengesahanPpta(ctx: RuleContext, s: LogicalSection, paras: Para[]) {
+  const { c, docType } = ctx;
+  const text = paras.map((p) => p.text).join(" \n ");
+  const lower = text.toLowerCase();
+  const loc = paras[0] ? locOf(paras[0], s.label) : {};
+  const need: { re: RegExp; label: string }[] = [
+    { re: /\bnama\b/, label: "Nama" },
+    { re: /\b(npm|nim)\b|\b07\d{8,}\b/, label: "NPM" },
+    { re: /\bjudul\b|\b[A-Z]{4,}\b/, label: "Judul" },
+    { re: /program\s+studi/, label: "Program Studi" },
+    { re: /pembimbing\s+utama/, label: "Pembimbing Utama" },
+    { re: /pembimbing\s+pendamping/, label: "Pembimbing Pendamping" },
+    { re: /(koordinator|ketua)\s+program\s+studi/, label: "Koordinator Program Studi" },
+    { re: /tanggal(\s+ujian)?/, label: docType === "proposal" ? "Tanggal Ujian Proposal" : "Tanggal Ujian Skripsi" },
+  ];
+  if (docType === "skripsi") {
+    need.push({ re: /ketua\s+penguji/, label: "Ketua Penguji" });
+    need.push({ re: /anggota\s+penguji/, label: "Anggota Penguji" });
+    need.push({ re: /\bdekan\b/, label: "Dekan" });
+    need.push({ re: /tanggal\s+lulus/, label: "Tanggal Lulus" });
+  }
+  const missing = need.filter((n) => !n.re.test(n.label === "Judul" ? text : lower)).map((n) => n.label);
+  const tpl = docType === "proposal" ? "Lampiran 11a (Lembaran Pengesahan Ujian Proposal)" : "Lampiran 12 (Lembaran Pengesahan Skripsi)";
+  if (missing.length) c.warn("PENGESAHAN-01", CAT_PENGESAHAN, "Komponen lembar pengesahan tidak lengkap", `Tidak ditemukan: ${missing.join(", ")}. Sesuaikan dengan PPTA ${tpl}: Nama, NPM, Judul Skripsi, Program Studi; Disetujui oleh Komisi Pembimbing (Pembimbing Utama, Pembimbing Pendamping)${docType === "skripsi" ? "; Komisi Penguji (Ketua Penguji, Anggota Penguji 1 dan 2); Diketahui oleh Dekan dan Koordinator Program Studi; Tanggal Ujian dan Tanggal Lulus" : "; Diketahui oleh Koordinator Program Studi; Tanggal Ujian Proposal"}.`, loc, { basis: "ppta" });
+  if (docType === "proposal" && !/ujian\s+proposal/.test(lower) && !/ujian\s+proposal/i.test(ctx.doc.paras[s.headingParaIndex ?? 0]?.text ?? ""))
+    c.info("PENGESAHAN-06", CAT_PENGESAHAN, 'Judul halaman pengesahan proposal tanpa "UJIAN PROPOSAL"', 'PPTA Lampiran 11a memberi judul "LEMBARAN PENGESAHAN" diikuti "UJIAN PROPOSAL".', loc, { basis: "ppta" });
+  // title: "Judul Skripsi : …" field, or the Prodi layout (title above "Oleh")
+  const field = text.match(/judul(?:\s+(?:skripsi|proposal))?\s*:\s*([^\n]+)/i)?.[1];
+  const olehIdx = paras.findIndex((p) => /^oleh$/i.test(p.text.trim()));
+  const title = field ?? (olehIdx > 0 ? paras.slice(0, olehIdx).map((p) => p.text).join(" ") : "");
+  if (ctx.coverTitle && title && similarity(title, ctx.coverTitle) < 0.6)
+    c.error("PENGESAHAN-03", CAT_PENGESAHAN, "Judul pada lembar pengesahan berbeda dengan sampul", `Lembar pengesahan: "${title.slice(0, 100)}" ≠ sampul: "${ctx.coverTitle.slice(0, 100)}".`, loc);
+}
+
 function pernyataan(ctx: RuleContext, s: LogicalSection) {
   const { c } = ctx;
   const paras = ctx.parasOf(s);
   const text = paras.map((p) => p.text).join(" \n ");
   const lower = text.toLowerCase();
+  // PPTA Lampiran 8 "Pernyataan Orisinalitas Skripsi" (latest guideline) replaces the Prodi template's field list
   const need = [
     { re: /\bnama\b/, label: "Nama" },
-    { re: /\bnpm\b/, label: "NPM" },
-    { re: /\bfakultas\b/, label: "Fakultas" },
-    { re: /jurusan|program studi/, label: "Jurusan/Program Studi" },
-    { re: /\bjudul\b/, label: "Judul Skripsi" },
-    { re: /\bpenulis\b/, label: "Penulis (tanda tangan)" },
-    { re: /universitas khairun/, label: "Universitas Khairun" },
+    { re: /\b(npm|nim)\b/, label: "NPM/NIM" },
+    { re: /program studi|\bps\b|jurusan/, label: "Program Studi (PS)" },
+    { re: /\bjudul\b/, label: "Judul" },
+    { re: /plagia/, label: "pernyataan bebas plagiasi" },
+    { re: /ternate\s*,/, label: "Ternate, tanggal" },
   ];
   const missing = need.filter((n) => !n.re.test(lower)).map((n) => n.label);
   const loc = paras[0] ? locOf(paras[0], s.label) : {};
-  if (missing.length) c.warn("PERNYATAAN-01", CAT_PERNYATAAN, "Komponen lembar pernyataan keaslian tidak lengkap", `Tidak ditemukan: ${missing.join(", ")}.`, loc);
+  if (missing.length) c.warn("PERNYATAAN-01", CAT_PERNYATAAN, "Komponen pernyataan orisinalitas tidak lengkap", `Tidak ditemukan: ${missing.join(", ")}. Lihat PPTA Lampiran 8 (Pernyataan Orisinalitas Skripsi): naskah tidak pernah diajukan orang lain, murni karya sendiri kecuali arahan pembimbing, bersedia digugurkan bila terbukti plagiasi; ditutup "Ternate, tanggal" dengan Nama, NIM, PS, BK.`, loc, { basis: "ppta" });
   // title after "Judul ... :"
-  const m = text.match(/judul(?:\s+skripsi)?\s*:\s*([^\n]+(?:\n[^\n:]+)*)/i);
+  const m = text.match(/judul(?:\s+skripsi)?\s*:\s*([^\n]+(?:\n[^\n:]+)*)/i) ?? text.match(/dengan\s+judul\s*:?\s*([^\n]+)/i);
   if (m) {
     const title = m[1].replace(/\s+/g, " ").trim();
-    if (isUpperCase(title) && words(title).length > 3) c.error("PERNYATAAN-02", CAT_PERNYATAAN, "Judul pada pernyataan keaslian tidak boleh kapital seluruhnya", `Judul harus ditulis dengan huruf awal kapital pada setiap kata (Capitalize Each Word), bukan "${title.slice(0, 80)}".`, loc);
-    else {
-      const bad = titleCaseViolations(title, { allowLowerConjunctions: true });
-      if (bad.length > 1) c.warn("PERNYATAAN-02", CAT_PERNYATAAN, "Judul pada pernyataan keaslian tidak Capitalize Each Word", `Kata "${bad.slice(0, 5).join('", "')}" harus diawali huruf kapital.`, loc);
-    }
+    // PPTA Lampiran 8: "TULISKAN JUDUL DENGAN HURUF KAPITAL" (the older Prodi template used Capitalize Each Word)
+    if (!isUpperCase(title)) c.warn("PERNYATAAN-02", CAT_PERNYATAAN, "Judul pada pernyataan orisinalitas tidak ditulis kapital", `PPTA Lampiran 8 meminta judul ditulis dengan huruf kapital: "${title.slice(0, 80).toUpperCase()}". (Format prodi lama memakai Capitalize Each Word; PPTA sebagai panduan terbaru diikuti.)`, loc, { expected: "HURUF KAPITAL", actual: title.slice(0, 60), basis: "ppta" });
     if (ctx.coverTitle && similarity(title, ctx.coverTitle) < 0.6) c.error("PERNYATAAN-03", CAT_PERNYATAAN, "Judul pada pernyataan keaslian berbeda dengan sampul", `Pernyataan: "${title.slice(0, 100)}" ≠ sampul: "${ctx.coverTitle.slice(0, 100)}".`, loc);
   }
   if (!ctx.isPdf) {
@@ -210,7 +263,7 @@ function kataPengantar(ctx: RuleContext, s: LogicalSection) {
       if (isUpperCase(quoted)) c.error("KP-03", CAT_KP, "Judul pada kata pengantar ditulis kapital seluruhnya", `Judul yang dikutip pada kata pengantar tidak boleh kapital semua; gunakan huruf awal kapital tiap kata (contoh panduan: "Audit Tingkat Kapabilitas Sistem Informasi Kubermas (SIMAS) Menggunakan Framework COBIT 5").`, locOf(p, s.label));
       const quotedRuns = p.runs.filter((r) => quoted.includes(r.text.trim()) && r.text.trim().length > 3);
       if (quotedRuns.length && quotedRuns.every((r) => r.italic)) c.error("KP-04", CAT_KP, "Judul pada kata pengantar dimiringkan (italic)", "Judul yang dikutip pada kata pengantar tidak boleh italic.", locOf(p, s.label));
-      const capConj = words(quoted).filter((w, i) => i > 0 && CONJUNCTIONS.has(w.toLowerCase()) && /^[A-Z]/.test(w));
+      const capConj = words(quoted).filter((w, i) => i > 0 && TITLE_LOWERCASE.has(w.toLowerCase()) && /^[A-Z]/.test(w));
       if (capConj.length) c.warn("KP-05", CAT_KP, "Kata penghubung pada judul ditulis kapital", `Kata "${[...new Set(capConj)].join('", "')}" pada judul di kata pengantar sebaiknya huruf kecil (dan, pada, di, untuk, dengan, …).`, locOf(p, s.label));
     }
   }
@@ -389,7 +442,7 @@ function daftarGambarTabel(ctx: RuleContext, s: LogicalSection, kind: "Gambar" |
   const entries = parseEntries(paras).filter((e) => new RegExp(`^${kind}\\s+\\d`, "i").test(e.text));
   const loc = paras[0] ? locOf(paras[0], s.label) : {};
   const all = paras.map((p) => p.text).join(" ").toUpperCase();
-  if (!/\bHALAMAN\b/.test(all)) c.warn("LIST-01", CAT_DAFTAR, `Kata "Halaman" tidak ditemukan pada Daftar ${kind}`, `Daftar ${kind} diawali label "Halaman" rata kanan.`, loc);
+  if (!/\b(HALAMAN|HAL)\b/.test(all)) c.warn("LIST-01", CAT_DAFTAR, `Kata "Halaman" tidak ditemukan pada Daftar ${kind}`, `Daftar ${kind} diawali label "Halaman" rata kanan.`, loc);
   const re = new RegExp(`^${kind}\\s+(\\d+)[.,](\\d+)\\.?\\s*(.*)$`, "i");
   const parsed = entries.map((e) => ({ e, m: e.text.match(re) })).filter((x) => x.m) as { e: TocEntry; m: RegExpMatchArray }[];
   // sequence
@@ -410,8 +463,7 @@ function daftarGambarTabel(ctx: RuleContext, s: LogicalSection, kind: "Gambar" |
   // capitalization of caption words
   for (const { e, m } of parsed) {
     const title = m[3].replace(/\([^)]*\)\s*$/, "").trim();
-    const bad = titleCaseViolations(title, { allowLowerConjunctions: true });
-    if (bad.length) c.warn("LIST-03", CAT_DAFTAR, `Huruf awal keterangan ${kind.toLowerCase()} harus kapital`, `Pada entri "${e.text.slice(0, 60)}", kata "${bad.slice(0, 4).join('", "')}" harus diawali huruf besar (panduan: huruf awal masing-masing keterangan huruf besar).`, locOf(e.para, s.label, e.text), { fold: true });
+    if (/^[a-z]/.test(title)) c.warn("LIST-03", CAT_DAFTAR, `Judul ${kind.toLowerCase()} tidak diawali huruf kapital`, `"${e.text.slice(0, 60)}" — judul ${kind.toLowerCase()} diawali huruf kapital (PPTA 6.1.1, 6.2).`, locOf(e.para, s.label, e.text), { fold: true, basis: "ppta" });
   }
   // compare with body captions
   const caps = captionsInBody(ctx).filter((x) => x.kind === kind);
@@ -435,40 +487,62 @@ function daftarGambarTabel(ctx: RuleContext, s: LogicalSection, kind: "Gambar" |
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * Skripsi abstract. The PPTA (latest guideline, 3.1.4 + Lampiran 9) replaces the Prodi abstract layout:
+ * header "NAMA MAHASISWA. Judul. Dibimbing oleh NAMA PEMBIMBING 1, NAMA PEMBIMBING 2." (names in capitals,
+ * no NPM, supervisors without academic titles), one single-spaced paragraph, keywords ≤ 5 in alphabetical order.
+ * Typography the PPTA does not specify (Arial Narrow 11 pt, justify) still follows the Prodi format.
+ */
 function abstrak(ctx: RuleContext, s: LogicalSection) {
   const { c } = ctx;
   const paras = ctx.parasOf(s);
   if (!paras.length) return;
   const loc = locOf(paras[0], s.label);
-  const title = paras[0];
-  const tsize = dominantSize(title);
-  if (!isUpperCase(title.text)) c.error("ABS-01", CAT_ABSTRAK, "Judul abstrak harus huruf kapital", `"${title.text.slice(0, 80)}" harus kapital, tebal, 12 pt, rata tengah, maksimal 15 kata.`, loc);
-  if (!isMostlyBold(title)) c.warn("ABS-01", CAT_ABSTRAK, "Judul abstrak tidak tebal", "Judul abstrak harus bold.", loc);
-  if (tsize !== undefined && Math.abs(tsize - 12) > 0.6) c.warn("ABS-02", CAT_ABSTRAK, "Ukuran font judul abstrak bukan 12 pt", `Terukur ${tsize} pt.`, loc, { expected: "12 pt", actual: `${tsize} pt` });
-  if (words(title.text).length > 15) c.warn("ABS-03", CAT_ABSTRAK, `Judul abstrak melebihi 15 kata (${words(title.text).length})`, "Panduan: judul abstrak maksimal 15 kata.", loc);
-  if (title.align !== "center") c.warn("ABS-04", CAT_ABSTRAK, "Judul abstrak tidak rata tengah", "Judul abstrak harus rata tengah.", loc);
-  if (ctx.coverTitle && similarity(title.text, ctx.coverTitle) < 0.6) c.error("ABS-05", CAT_ABSTRAK, "Judul abstrak berbeda dengan judul sampul", `Abstrak: "${title.text.slice(0, 90)}" ≠ sampul: "${ctx.coverTitle.slice(0, 90)}".`, loc);
   const kkIdx = paras.findIndex((p) => /^kata\s*kunci\s*:/i.test(p.text));
-  const body = paras.slice(1, kkIdx > 0 ? kkIdx : undefined).filter((p) => p.text.length > 120);
+  const headerIdx = paras.findIndex((p, i) => i < 4 && /dibimbing\s+oleh/i.test(p.text));
+  const header = headerIdx >= 0 ? paras[headerIdx] : undefined;
+  if (!header) {
+    c.warn("ABS-16", CAT_ABSTRAK, 'Baris identitas "… Dibimbing oleh …" tidak ditemukan', 'PPTA Lampiran 9: abstrak diawali "NAMA MAHASISWA. Judul Skripsi. Dibimbing oleh NAMA PEMBIMBING 1, NAMA PEMBIMBING 2." — nama ditulis kapital, tanpa NPM, pembimbing tanpa gelar. Format prodi lama (judul kapital di tengah, nama dengan nomor afiliasi, alamat, e-mail) mengikuti gaya artikel jurnal; untuk skripsi gunakan format PPTA.', loc, { basis: "ppta" });
+  } else {
+    const h = header.text;
+    const student = h.split(".")[0].trim();
+    if (student && !isUpperCase(student)) c.warn("ABS-17", CAT_ABSTRAK, "Nama mahasiswa pada abstrak tidak kapital", `"${student}" — PPTA 3.1.4: semua nama pada baris identitas abstrak ditulis huruf kapital.`, locOf(header, s.label), { expected: student.toUpperCase(), actual: student, basis: "ppta" });
+    const sup = h.split(/dibimbing\s+oleh/i)[1] ?? "";
+    if (sup && !isUpperCase(sup.replace(/\b(dan|and)\b/gi, ""))) c.warn("ABS-17", CAT_ABSTRAK, "Nama pembimbing pada abstrak tidak kapital", `"${sup.trim().slice(0, 80)}" — PPTA 3.1.4: nama pembimbing ditulis huruf kapital.`, locOf(header, s.label), { basis: "ppta" });
+    if (/\b(S\.\s?Kom|M\.\s?Kom|M\.\s?Cs|S\.\s?T|M\.\s?T|M\.\s?Sc|M\.\s?Eng|Dr|Ir|Prof)\b\.?/i.test(sup)) c.warn("ABS-18", CAT_ABSTRAK, "Nama pembimbing pada abstrak memakai gelar", "PPTA 3.1.4: nama-nama dosen pembimbing ditulis tanpa gelar.", locOf(header, s.label), { basis: "ppta" });
+    if (/\b\d{8,}\b/.test(h)) c.warn("ABS-18", CAT_ABSTRAK, "Baris identitas abstrak memuat NPM", "PPTA 3.1.4: nama mahasiswa ditulis tanpa nomor pokok mahasiswa (NPM).", locOf(header, s.label), { basis: "ppta" });
+    if (ctx.coverTitle) {
+      const titleWords = ctx.coverTitle.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2);
+      const hl = h.toLowerCase();
+      const found = titleWords.filter((w) => hl.includes(w)).length;
+      if (titleWords.length && found / titleWords.length < 0.6) c.error("ABS-05", CAT_ABSTRAK, "Judul pada abstrak berbeda dengan judul sampul", `Baris identitas abstrak: "${snippet(h, 100)}" tidak memuat judul sampul "${ctx.coverTitle.slice(0, 90)}".`, locOf(header, s.label));
+    }
+  }
+  const startBody = header ? headerIdx + 1 : 1;
+  const body = paras.slice(startBody, kkIdx > 0 ? kkIdx : undefined).filter((p) => p.text.length > 120);
   const wc = body.reduce((n, p) => n + words(p.text).length, 0);
-  if (body.length && (wc < 150 || wc > 250)) c.warn("ABS-06", CAT_ABSTRAK, `Panjang abstrak ${wc} kata`, "Panjang ideal abstrak 150–250 kata.", locOf(body[0], s.label), { expected: "150–250 kata", actual: `${wc} kata` });
+  if (body.length > 1) c.warn("ABS-06", CAT_ABSTRAK, `Isi abstrak terdiri atas ${body.length} paragraf`, "PPTA 3.1.4: abstrak disusun dalam satu paragraf.", locOf(body[1], s.label), { expected: "1 paragraf", actual: `${body.length} paragraf`, basis: "ppta" });
+  // PPTA is internally inconsistent: 3.1.4 (Gambar 3.2) says max 100 words, Lampiran 9 says max 500.
+  if (wc > 500) c.warn("ABS-06", CAT_ABSTRAK, `Panjang abstrak ${wc} kata`, "PPTA Lampiran 9 membatasi abstrak maksimal 500 kata (dan tidak lebih dari satu halaman).", locOf(body[0], s.label), { expected: "≤ 500 kata", actual: `${wc} kata`, basis: "ppta" });
+  else if (wc > 100) c.info("ABS-06", CAT_ABSTRAK, `Panjang abstrak ${wc} kata`, "PPTA 3.1.4 (Gambar 3.2) menyebut maksimal 100 kata, sedangkan PPTA Lampiran 9 menyebut maksimal 500 kata. Konfirmasikan batas yang dipakai dengan pembimbing.", locOf(body[0], s.label), { basis: "ppta" });
   for (const p of body) {
     const sz = dominantSize(p);
     if (sz !== undefined && Math.abs(sz - 11) > 0.6) c.error("ABS-07", CAT_ABSTRAK, "Ukuran font isi abstrak bukan 11 pt", `Isi abstrak terukur ${sz} pt; panduan Arial Narrow 11 pt.`, locOf(p, s.label), { expected: "11 pt", actual: `${sz} pt`, fold: true });
-    if (p.lineSpacing !== undefined && Math.abs(p.lineSpacing - 1) > 0.1 && (ctx.isPdf ? (p.lineCount ?? 0) >= 2 : true)) c.warn("ABS-08", CAT_ABSTRAK, "Line spacing isi abstrak bukan 1.0", `Terukur ${fmtSpacing(p.lineSpacing)}.`, locOf(p, s.label), { fold: true });
+    if (p.lineSpacing !== undefined && Math.abs(p.lineSpacing - 1) > 0.1 && (ctx.isPdf ? (p.lineCount ?? 0) >= 2 : true)) c.warn("ABS-08", CAT_ABSTRAK, "Line spacing isi abstrak bukan 1.0", `Terukur ${fmtSpacing(p.lineSpacing)}; abstrak ditulis satu spasi (PPTA Lampiran 9, format prodi).`, locOf(p, s.label), { fold: true, basis: "keduanya" });
     if (ctx.isPdf ? p.justified === false : p.align !== "both") c.warn("ABS-09", CAT_ABSTRAK, "Isi abstrak tidak rata kiri-kanan", "Isi abstrak harus justify.", locOf(p, s.label), { fold: true });
   }
-  if (kkIdx < 0) c.error("ABS-10", CAT_ABSTRAK, '"Kata kunci:" tidak ditemukan', 'Abstrak harus diakhiri baris "Kata kunci: …" (maksimal enam kata, huruf kecil kecuali singkatan, dipisahkan koma, 11 pt).', loc);
+  if (kkIdx < 0) c.error("ABS-10", CAT_ABSTRAK, '"Kata kunci:" tidak ditemukan', 'Abstrak diakhiri baris "Kata kunci: …" — maksimal lima kata atau frasa, diurutkan alfabetis (PPTA 3.1.4).', loc, { basis: "keduanya" });
   else {
     const kk = paras[kkIdx];
     const list = kk.text.replace(/^kata\s*kunci\s*:/i, "").split(/[,;]/).map((x) => x.trim().replace(/\.$/, "")).filter(Boolean);
-    if (list.length > 6) c.warn("ABS-11", CAT_ABSTRAK, `Kata kunci lebih dari enam (${list.length})`, "Maksimum enam kata kunci dipisahkan koma.", locOf(kk, s.label));
+    if (list.length > 5) c.warn("ABS-11", CAT_ABSTRAK, `Kata kunci lebih dari lima (${list.length})`, "PPTA 3.1.4: kata kunci tidak melebihi lima kata atau frasa.", locOf(kk, s.label), { expected: "≤ 5", actual: String(list.length), basis: "ppta" });
+    const sorted = [...list].sort((a, b) => a.localeCompare(b, "id", { sensitivity: "base" }));
+    if (list.length > 1 && list.join("|") !== sorted.join("|")) c.warn("ABS-14", CAT_ABSTRAK, "Kata kunci tidak diurutkan secara alfabetis", `Kata kunci: ${list.join(", ")}. PPTA 3.1.4: kata kunci diurutkan alfabetis — ${sorted.join(", ")}.`, locOf(kk, s.label), { basis: "ppta" });
     const upper = list.filter((k) => /^[A-Z][a-z]/.test(k));
     if (upper.length) c.warn("ABS-12", CAT_ABSTRAK, "Kata kunci diawali huruf kapital", `"${upper.join('", "')}" sebaiknya huruf kecil (kecuali singkatan).`, locOf(kk, s.label));
     const sz = dominantSize(kk);
     if (sz !== undefined && Math.abs(sz - 11) > 0.6) c.warn("ABS-07", CAT_ABSTRAK, "Ukuran font kata kunci bukan 11 pt", `Terukur ${sz} pt.`, locOf(kk, s.label), { fold: true });
   }
-  void isMostlyItalic;
 }
 
 /* ------------------------------------------------------------------ */

@@ -6,6 +6,7 @@ import { frontMatterRules } from "./frontmatter";
 import { bodyRules } from "./body";
 import { pageNumberRules } from "./pagenumbers";
 import { referenceRules } from "./references";
+import { pptaRules } from "./ppta";
 
 const SEV_RANK = { error: 0, warning: 1, info: 2 };
 
@@ -18,6 +19,7 @@ export function runRules(doc: NormalizedDoc, docType: DocType, sections: Logical
     ["body", bodyRules],
     ["pagenumbers", pageNumberRules],
     ["references", referenceRules],
+    ["ppta", pptaRules],
   ];
   for (const [name, fn] of steps) {
     try {

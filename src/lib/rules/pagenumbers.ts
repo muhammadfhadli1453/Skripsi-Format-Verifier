@@ -40,6 +40,7 @@ function pdfPageNumbers(ctx: RuleContext) {
 
     if (!pn) {
       if (kind === "lampiran") continue;
+      if ((kind === "abstrak" || kind === "abstract") && ctx.docType === "skripsi") continue; // PPTA 3.1.4: not printed
       if (kind === "pengesahan") {
         c.info("PAGE-12", CAT, "Lembar pengesahan tidak bernomor halaman", "Lembar pengesahan dihitung sebagai halaman ii. Bila template Anda menampilkan nomor, gunakan Romawi kecil di footer tengah.", { page: pg.number, section: sec?.label });
         continue;
@@ -51,6 +52,11 @@ function pdfPageNumbers(ctx: RuleContext) {
     // font
     if (pn.font && !isArialNarrow(pn.font)) c.error("PAGE-02", CAT, `Font nomor halaman bukan Arial Narrow (${pn.font})`, `Nomor halaman "${pn.text}" pada hal. ${pg.number} menggunakan font ${pn.font} ${pn.size ?? ""} pt. Panduan: Arial Narrow 12 pt.`, loc, { expected: "Arial Narrow 12 pt", actual: `${pn.font} ${pn.size ?? ""} pt`, fold: true, fix: "Double-click area footer/header → blok nomor → font Arial Narrow 12." });
     if (pn.size !== undefined && Math.abs(pn.size - 12) > 0.6) c.error("PAGE-03", CAT, "Ukuran font nomor halaman bukan 12 pt", `Nomor halaman "${pn.text}" pada hal. ${pg.number} berukuran ${pn.size} pt.`, loc, { expected: "12 pt", actual: `${pn.size} pt`, fold: true });
+    // PPTA 3.1.4: the skripsi abstract page is counted as i but its number is not printed
+    if ((kind === "abstrak" || kind === "abstract") && ctx.docType === "skripsi") {
+      c.warn("PAGE-15", CAT, "Nomor halaman abstrak tidak perlu dicetak", `Hal. ${pg.number} (${sec?.label}) mencetak nomor "${pn.text}". PPTA 3.1.4: halaman abstrak diberi nomor halaman i, dihitung sebagai halaman isi, tetapi tidak dicetak.`, loc, { fold: true, basis: "ppta" });
+      continue;
+    }
     if (ROMAN_KINDS.has(kind)) {
       if (pn.kind !== "roman") c.error("PAGE-04", CAT, "Halaman awal (sebelum BAB I) harus bernomor Romawi kecil", `Hal. ${pg.number} (${sec?.label}) bernomor "${pn.text}"; seharusnya romawi (ii, iii, iv, …).`, loc, { fold: true });
       else {
@@ -98,6 +104,7 @@ function docxPageNumbers(ctx: RuleContext) {
     const h = doc.paras[ls.headingParaIndex];
     const loc = locOf(h, ls.label);
     if (ls.kind === "pengesahan") continue; // usually unnumbered (counted as ii)
+    if ((ls.kind === "abstrak" || ls.kind === "abstract") && ctx.docType === "skripsi") continue; // PPTA 3.1.4: number not printed
     if (ROMAN_KINDS.has(ls.kind)) {
       if (!checkedSections.has(sec.index) && sec.pgNumFmt !== "lowerRoman") c.error("PAGE-04", CAT, "Halaman awal (sebelum BAB I) harus bernomor Romawi kecil", `Section yang memuat "${ls.label}" menggunakan format nomor "${sec.pgNumFmt ?? "decimal"}". Insert → Page Number → Format Page Numbers → Number format: i, ii, iii.`, loc, { fold: true });
       const footer = sec.headersFooters.find((hf) => hf.kind === "footer" && hf.type === "default");

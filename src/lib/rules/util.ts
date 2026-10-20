@@ -5,6 +5,9 @@ export const CONJUNCTIONS = new Set([
   "dan", "pada", "di", "ke", "dari", "untuk", "dengan", "terhadap", "dalam", "atau", "yang", "sebagai", "berbasis", "menggunakan", "melalui", "oleh", "bagi", "antara", "serta", "guna", "secara", "atas", "akan", "tentang", "bagi", "hingga", "sampai", "maupun", "versus",
 ]);
 
+/** True connecting words/prepositions that stay lowercase inside titles (PPTA 4.2.1.2, e.g. "Alat dan Bahan"). */
+export const TITLE_LOWERCASE = new Set(["dan", "atau", "di", "ke", "dari", "pada", "untuk", "dengan", "terhadap", "dalam", "yang", "sebagai", "oleh", "bagi", "antara", "serta", "tentang", "hingga", "sampai", "maupun", "tetapi", "namun", "agar", "supaya", "karena", "akan", "atas", "per", "secara"]);
+
 export function words(s: string): string[] {
   return s.split(/\s+/).map((w) => w.trim()).filter(Boolean);
 }

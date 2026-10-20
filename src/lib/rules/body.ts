@@ -229,6 +229,8 @@ export function bodyRules(ctx: RuleContext) {
   void sizes;
 
   /* ---------- punctuation & citations (all bab paragraphs) ---------- */
+  const noCommaCites: { p: Para; label: string; text: string; name: string; year: string }[] = [];
+  let commaCites = 0;
   for (const s of chapters) {
     for (const p of ctx.parasOf(s)) {
       if (p.inTable) continue;
@@ -256,8 +258,9 @@ export function bodyRules(ctx: RuleContext) {
       for (const m of t.matchAll(/\(([^()]{2,80}?)\s+((?:19|20)\d{2})[a-z]?\)/g)) {
         if (/,\s*$/.test(m[1]) || /\bet al\.?$|\bdkk\.?$/i.test(m[1])) continue;
         if (/\d$/.test(m[1])) continue;
-        c.warn("TEXT-06", CAT_TEXT, "Format sitasi tidak sesuai", `"${m[0]}" — nama dan tahun dipisahkan koma: "(${m[1].trim()}, ${m[2]})".`, locOf(p, s.label, m[0]), { fold: true });
+        noCommaCites.push({ p, label: s.label, text: m[0], name: m[1].trim(), year: m[2] });
       }
+      commaCites += (t.match(/\([^()]{2,80}?,\s*(?:19|20)\d{2}[a-z]?\)/g) ?? []).length;
       for (const m of t.matchAll(/[A-Za-z]\.\s+(\([^()]{2,80}?,\s*(?:19|20)\d{2}[a-z]?\))\s*\.?/g)) {
         if (/^[A-Z]/.test(t.slice((m.index ?? 0) + m[0].length).trim()) || (m.index ?? 0) + m[0].length >= t.length - 1) {
           c.warn("TEXT-07", CAT_TEXT, "Titik ditempatkan sebelum sitasi", `"…${t.slice(Math.max(0, (m.index ?? 0) - 15), (m.index ?? 0) + m[0].length + 2)}" — titik akhir kalimat ditulis setelah sitasi: "… ${m[1]}."`, locOf(p, s.label, m[0]), { fold: true });
@@ -273,6 +276,16 @@ export function bodyRules(ctx: RuleContext) {
     }
   }
 
+  // "(Nama 2020)" without comma: the PPTA's own examples use it, the Prodi format uses "(Nama, 2020)".
+  // Flag only when the document mixes both styles; otherwise give an informational note.
+  if (noCommaCites.length) {
+    const first = noCommaCites[0];
+    if (commaCites > 0) {
+      c.warn("TEXT-06", CAT_TEXT, "Format sitasi tidak konsisten", `${noCommaCites.length} sitasi tanpa koma (contoh "${first.text}") bercampur dengan ${commaCites} sitasi berkoma. Gunakan satu gaya; format prodi: "(${first.name}, ${first.year})".`, locOf(first.p, first.label, first.text), { fold: true });
+      for (const x of noCommaCites.slice(1, 25)) c.add({ id: "TEXT-06", severity: "warning", category: CAT_TEXT, title: "Format sitasi tidak konsisten", detail: "", location: locOf(x.p, x.label, x.text), foldKey: "TEXT-06::Format sitasi tidak konsisten" });
+    } else c.info("TEXT-06", CAT_TEXT, "Sitasi ditulis tanpa koma antara nama dan tahun", `Contoh "${first.text}". Format prodi menulis "(${first.name}, ${first.year})". PPTA menetapkan gaya APA (nama, tahun) namun sebagian contohnya tanpa koma, jadi kedua bentuk diterima selama konsisten.`, locOf(first.p, first.label, first.text));
+  }
+
   /* ---------- captions ---------- */
   const bodyText = chapters.flatMap((s) => ctx.parasOf(s)).filter((p) => !captionIdx.has(p.index)).map((p) => p.text).join(" \n ").toLowerCase();
   const seq = new Map<string, number[]>();
@@ -283,8 +296,21 @@ export function bodyRules(ctx: RuleContext) {
     if (sec?.kind === "bab" && sec.chapter !== cap.chapter) c.error("CAP-01", CAT_CAPTION, `Nomor ${cap.kind.toLowerCase()} tidak sesuai nomor BAB`, `"${snippet(cap.para.text, 60)}" berada di BAB ${toRoman(sec.chapter ?? 0)} tetapi bernomor ${cap.chapter}.${cap.number}.`, locOf(cap.para, cap.label), { fold: true });
     if (cap.para.align !== "center") c.error("CAP-02", CAT_CAPTION, `Keterangan ${cap.kind.toLowerCase()} tidak rata tengah`, `"${snippet(cap.para.text, 60)}" harus rata tengah (Ctrl+E).`, locOf(cap.para, cap.label), { fold: true });
     else if (!ctx.isPdf && centerShiftPt(cap.para) > 4) c.error("CAP-02", CAT_CAPTION, `Keterangan ${cap.kind.toLowerCase()} rata tengah tetapi bergeser karena indentasi`, `"${snippet(cap.para.text, 60)}" memakai Center, namun masih memiliki indentasi (kiri ${ptToCm(cap.para.leftIndent ?? 0).toFixed(2)} cm, baris pertama ${ptToCm(cap.para.firstLineIndent ?? 0).toFixed(2)} cm) sehingga posisinya tidak tepat di tengah.`, locOf(cap.para, cap.label), { fix: "Paragraph → Indentation: Left 0, Special: (none), lalu Ctrl+E.", fold: true });
-    const bad = titleCaseViolations(cap.title.replace(/\([^)]*\)\s*$/, ""), { allowLowerConjunctions: true });
-    if (bad.length) c.warn("CAP-03", CAT_CAPTION, `Huruf awal kata pada keterangan ${cap.kind.toLowerCase()} tidak kapital`, `"${snippet(cap.para.text, 60)}" — kata "${bad.slice(0, 4).join('", "')}" sebaiknya diawali huruf kapital.`, locOf(cap.para, cap.label), { fold: true });
+    // PPTA 6.1.1 a.4 / 6.2 (latest guideline): only the first letter of a caption is capital, except names and
+    // special terms. This replaces the Prodi template's "Huruf Awal Masing-masing Keterangan harus Huruf Besar".
+    const capTitle = cap.title.replace(/\([^)]*\)\s*\.?\s*$/, "").trim();
+    if (/^[a-z]/.test(capTitle)) c.warn("CAP-03", CAT_CAPTION, `Judul ${cap.kind.toLowerCase()} tidak diawali huruf kapital`, `"${snippet(cap.para.text, 60)}" — judul ${cap.kind.toLowerCase()} diawali huruf kapital (PPTA 6.1.1, 6.2).`, locOf(cap.para, cap.label), { fold: true, basis: "ppta" });
+    else {
+      const italicWords = new Set(cap.para.runs.filter((r) => r.italic).flatMap((r) => words(r.text.toLowerCase())));
+      const foreignWords = new Set(FOREIGN_TERMS.flatMap((t) => t.split(/\s+/)));
+      const rest = words(capTitle).slice(1).map((w) => w.replace(/^[("'“]+|[)"'”.,:;]+$/g, "")).filter((w) => /^[A-Za-z]/.test(w));
+      const ordinary = rest.filter((w) => !/^[A-Z0-9-]{2,}$/.test(w) && !/\d/.test(w) && !italicWords.has(w.toLowerCase()) && !foreignWords.has(w.toLowerCase()));
+      const capped = ordinary.filter((w) => /^[A-Z][a-z]/.test(w));
+      // sentence case followed by a proper name ("Tampak depan Miso Dental Care") is fine: require the 2nd word capped too
+      const secondCapped = !!rest[0] && /^[A-Z][a-z]/.test(rest[0]) && ordinary.includes(rest[0]);
+      if (secondCapped && capped.length >= 2 && capped.length >= ordinary.length * 0.6)
+        c.warn("CAP-03", CAT_CAPTION, `Judul ${cap.kind.toLowerCase()} ditulis Huruf Awal Setiap Kata Kapital`, `"${snippet(cap.para.text, 60)}" — PPTA 6.1.1 a.4: hanya huruf pertama judul ${cap.kind.toLowerCase()} yang ditulis kapital, kecuali istilah atau nama khusus. Contoh: "${cap.kind} ${cap.chapter}.${cap.number} ${capTitle.charAt(0)}${capTitle.slice(1).replace(new RegExp(`\\b(${capped.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "g"), (w) => w.toLowerCase())}". (Format prodi lama memakai huruf awal setiap kata kapital; PPTA sebagai panduan terbaru diikuti.)`, locOf(cap.para, cap.label), { fold: true, basis: "ppta" });
+    }
     const ref = new RegExp(`\\b${cap.kind.toLowerCase()}\\s+${cap.chapter}[.,]${cap.number}\\b(?![.,]\\d)`);
     if (!ref.test(bodyText)) c.warn("CAP-04", CAT_CAPTION, `${cap.kind} ${cap.chapter}.${cap.number} tidak dirujuk dalam teks`, `Tidak ada kalimat yang merujuk "${cap.kind.toLowerCase()} ${cap.chapter}.${cap.number}" (contoh: "… dapat dilihat pada ${cap.kind.toLowerCase()} ${cap.chapter}.${cap.number}.").`, locOf(cap.para, cap.label), { fold: true });
     const sz = dominantSize(cap.para);
