@@ -1,0 +1,42 @@
+{
+  "name": "skripsi-format-verifier",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pemeriksa format naskah Proposal/Skripsi/KP (.docx/.pdf) sesuai panduan penulisan Prodi Informatika Universitas Khairun",
+  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "verify": "tsx scripts/verify-cli.mts",
+    "dump": "tsx scripts/dump.mts",
+    "fixture": "tsx scripts/make-fixture.mts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "fast-xml-parser": "^5.11.2",
+    "jszip": "^3.10.2",
+    "mupdf": "^1.28.1",
+    "next": "16.4.2",
+    "pdfjs-dist": "^6.4.299",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "docx": "^9.13.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.2",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}

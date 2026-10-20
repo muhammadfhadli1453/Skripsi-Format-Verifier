@@ -1,0 +1,45 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# next.js / build output
+/.next/
+/out/
+/build
+/coverage
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# env files (only the example is committed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.pem
+.vscode/
+.idea/
+
+# project data — student manuscripts contain personal data (names, NPM) and stay local
+/testing-data/
+
+# lecturer tutorial recording + transcript (large / not for redistribution)
+/reference/tutorial*
