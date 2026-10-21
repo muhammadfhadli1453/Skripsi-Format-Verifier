@@ -8,9 +8,9 @@ if (json) {
 } else {
   console.log(`${report.fileName} [${report.source}] type=${report.docType} (detected ${report.detectedDocType}) pages=${report.pageCount} paras=${report.paragraphCount} ${report.durationMs}ms`);
   console.log("sections:", report.sections.map((s) => `${s.label}${s.firstPage ? `@${s.firstPage}` : ""}`).join(" | "));
-  console.log(`errors=${report.summary.errors} warnings=${report.summary.warnings} infos=${report.summary.infos} score=${report.summary.score}`);
+  console.log(`errors=${report.summary.errors} warnings=${report.summary.warnings} infos=${report.summary.infos} score=${report.summary.score}/100`);
   for (const i of report.issues) {
-    const loc = [i.location.page ? `p${i.location.page}` : "", i.location.section ?? ""].filter(Boolean).join(" ");
+    const loc = [i.location.page ? `p${i.location.page}${i.location.printedPage ? `(no.${i.location.printedPage})` : ""}` : "", i.location.section ?? ""].filter(Boolean).join(" ");
     console.log(`\n[${i.severity.toUpperCase()}] ${i.id} ${i.title}  (${loc})${i.occurrences?.length ? ` +${i.occurrences.length}` : ""}`);
     console.log(`   ${i.detail.slice(0, 300)}`);
     if (i.location.snippet) console.log(`   ↳ "${i.location.snippet.slice(0, 100)}"`);

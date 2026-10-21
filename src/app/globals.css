@@ -44,5 +44,11 @@ body {
   body {
     background: #fff;
     color: #000;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  @page {
+    size: A4;
+    margin: 1.5cm;
   }
 }

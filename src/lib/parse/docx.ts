@@ -1,8 +1,8 @@
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
-import type { Align, HeaderFooterInfo, ImageInfo, NormalizedDoc, Para, Run, SectionProps, TableInfo } from "../model";
-import { EMU_PER_CM } from "../model";
-import { normalizeFontName } from "./fonts";
+import type { Align, HeaderFooterInfo, ImageInfo, NormalizedDoc, PageNumberInfo, Para, Run, SectionProps, TableInfo } from "../model";
+import { EMU_PER_CM, romanToInt, toRoman } from "../model";
+import { isArialNarrow, normalizeFontName } from "./fonts";
 
 /* ------------------------------------------------------------------ */
 /* XML helpers (fast-xml-parser with preserveOrder)                    */
@@ -204,13 +204,6 @@ function fmtNumber(n: number, fmt: string): string {
       return String(n);
   }
 }
-function toRoman(num: number): string {
-  const map: [number, string][] = [[1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
-  let out = "";
-  for (const [v, s] of map) while (num >= v) (out += s), (num -= v);
-  return out;
-}
-
 function parseNumbering(xml: string | undefined): Numbering {
   const nums = new Map<string, NumLevel[]>();
   const counterKey = new Map<string, string>();
@@ -255,8 +248,9 @@ function parseNumbering(xml: string | undefined): Numbering {
 
 /**
  * Mirrors Word's list counters: a level that has not been used yet displays its start value
- * (so "%1.%2." on level 2 of a list whose level 1 starts at 3 renders "3.1."), deeper levels
- * reset when a shallower level advances, and isLgl forces decimal display of every level.
+ * (so "%1.%2." on level 2 of a list whose level 1 starts at 3 renders "3.1.") and from then on
+ * counts as used (a later level-1 item after "3.2.1." renders "3.3."), deeper levels reset when
+ * a shallower level advances, and isLgl forces decimal display of every level.
  */
 class NumberingCounter {
   private counters = new Map<string, (number | undefined)[]>();
@@ -270,6 +264,7 @@ class NumberingCounter {
       c = [];
       this.counters.set(key, c);
     }
+    for (let i = 0; i < ilvl; i++) if (c[i] === undefined) c[i] = levels[i]?.start ?? 1;
     c[ilvl] = c[ilvl] === undefined ? levels[ilvl].start : c[ilvl]! + 1;
     for (let i = ilvl + 1; i < 9; i++) c[i] = undefined;
     const lvl = levels[ilvl];
@@ -415,6 +410,10 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
   // Word stores <w:lastRenderedPageBreak/> where its layout engine broke pages on last save.
   // When present it is far more accurate than counting explicit page/section breaks.
   const renderedMode = documentXml.includes("lastRenderedPageBreak");
+  // how each section starts: w:type lives in the sectPr that closes that section (absent = next page)
+  const sectionContinuous = [...documentXml.matchAll(/<w:sectPr\b[^>]*?(?:\/>|>([\s\S]*?)<\/w:sectPr>)/g)].map((m) => /<w:type w:val="continuous"/.test(m[1] ?? ""));
+  // Word marks no lastRenderedPageBreak when the first paragraph after a section break is empty (e.g. an empty table cell)
+  let pendingSectionPage = false;
 
   const readSectPr = async (sectPr: XNode, firstParaIndex: number, lastParaIndex: number): Promise<SectionProps> => {
     const pgSz = child(sectPr, "w:pgSz");
@@ -541,7 +540,9 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
       for (const s of styleChain(styleId)) if (s.numId !== undefined) ((numId = s.numId), (ilvl = s.ilvl ?? 0)), (void 0);
     }
     let numText: string | undefined;
-    if (numId !== undefined && numId !== "0") {
+    // an empty paragraph that only carries a section break shows no list number and does not advance the list
+    const sectionBreakOnly = !!child(pPrNode, "w:sectPr") && !runs.some((r) => r.text.trim()) && !images.length;
+    if (numId !== undefined && numId !== "0" && !sectionBreakOnly) {
       numText = counter.next(numId, ilvl);
     }
     const rawText = runs.map((r) => r.text).join("");
@@ -556,10 +557,11 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
     let pageBreakBefore = !!(pp.pageBreakBefore || pendingPageBreak);
     let paraPage: number;
     if (renderedMode) {
-      if (flags.leadingRendered) estimatedPage++;
+      if (flags.leadingRendered || pendingSectionPage) estimatedPage++;
       paraPage = estimatedPage;
       estimatedPage += flags.renderedBreaks - (flags.leadingRendered ? 1 : 0);
-      if (flags.leadingRendered) pageBreakBefore = true;
+      if (flags.leadingRendered || pendingSectionPage) pageBreakBefore = true;
+      pendingSectionPage = false;
     } else {
       if (pageBreakBefore) estimatedPage++;
       paraPage = estimatedPage;
@@ -629,7 +631,10 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
       sections.push(await readSectPr(sectPr, sectionFirstPara, paras.length - 1));
       sectionIndex++;
       sectionFirstPara = paras.length;
-      if (!renderedMode) estimatedPage++;
+      if (!sectionContinuous[sectionIndex]) {
+        if (renderedMode) pendingSectionPage = true;
+        else estimatedPage++;
+      }
       pendingPageBreak = false;
     }
   };
@@ -640,10 +645,19 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
     const info: TableInfo = { index: tIndex, prevParaIndex: paras.length - 1, nextParaIndex: -1, cellParaIndexes: [], page: estimatedPage };
     tables.push(info);
     for (const tr of childrenNamed(tbl, "w:tr")) {
+      // the cells of a row sit side by side: a row split across a page carries a page-break marker in
+      // every cell, so each cell starts from the row's page and the row ends on the furthest one
+      const rowStart = estimatedPage;
+      const rowPendingSection = pendingSectionPage;
+      let rowEnd = rowStart;
       for (const tc of children(tr)) {
         if (nodeName(tc) !== "w:tc" && nodeName(tc) !== "w:sdt") continue;
+        estimatedPage = rowStart;
+        pendingSectionPage = rowPendingSection;
         await processBlocks(tc, { inTable: true, tableIndex: tIndex, tableStyleId });
+        rowEnd = Math.max(rowEnd, estimatedPage);
       }
+      estimatedPage = rowEnd;
     }
     info.nextParaIndex = paras.length;
   };
@@ -682,6 +696,7 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
   // estimated printed page numbers: each section restarts at pgNumStart or continues from the previous one
   let lastPrinted = 0;
   let lastPage = 0;
+  const secStart = new Map<number, { firstPage: number; start: number }>();
   for (const sec of sections) {
     const own = paras.slice(sec.firstParaIndex, sec.lastParaIndex + 1);
     const first = own.find((x) => x.page !== undefined);
@@ -689,6 +704,7 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
     const firstPage = first.page!;
     const startsNewPage = firstPage > lastPage;
     const start = sec.pgNumStart ?? (startsNewPage ? lastPrinted + 1 : lastPrinted);
+    secStart.set(sec.index, { firstPage, start });
     for (const x of own) if (x.page !== undefined) x.printedPage = start + (x.page - firstPage);
     const lastOwn = [...own].reverse().find((x) => x.printedPage !== undefined);
     if (lastOwn) {
@@ -696,8 +712,70 @@ export async function parseDocx(buffer: Buffer, fileName: string): Promise<Norma
       lastPage = lastOwn.page!;
     }
   }
+  const docxPageNumbers = simulatePageNumbers(paras, sections, secStart);
+  for (const p of paras) {
+    const shown = p.page !== undefined ? docxPageNumbers[p.page - 1] : undefined;
+    if (!shown) continue;
+    p.printedPageText = shown.text;
+    if (shown.value !== undefined) p.printedPage = shown.value; // a typed number wins over the section counter
+  }
 
-  return { source: "docx", fileName, paras, tables, sections, fontUsage, warnings };
+  return { source: "docx", fileName, paras, tables, sections, docxPageNumbers, fontUsage, warnings };
+}
+
+/**
+ * What each (estimated) page shows as its page number, the way Word renders it: the page takes the
+ * header/footer of the section it starts in, "first" variants apply to a section's first page when
+ * Different First Page is on, and a section without a reference of some type inherits it from the
+ * previous section. A PAGE field prints the section counter; a typed number prints as-is.
+ */
+function simulatePageNumbers(paras: Para[], sections: SectionProps[], secStart: Map<number, { firstPage: number; start: number }>): (PageNumberInfo | undefined)[] {
+  const pageCount = paras.reduce((m, p) => Math.max(m, p.page ?? 0), 0);
+  const ownerOf: (number | undefined)[] = [];
+  for (const p of paras) if (p.page !== undefined && ownerOf[p.page - 1] === undefined) ownerOf[p.page - 1] = p.sectionIndex;
+  const resolve = (secIndex: number, kind: HeaderFooterInfo["kind"], type: HeaderFooterInfo["type"]) => {
+    for (let i = secIndex; i >= 0; i--) {
+      const hf = sections[i]?.headersFooters.find((h) => h.kind === kind && h.type === type);
+      if (hf) return hf;
+    }
+    return undefined;
+  };
+  const out: (PageNumberInfo | undefined)[] = [];
+  let owner = 0;
+  for (let page = 1; page <= pageCount; page++) {
+    owner = ownerOf[page - 1] ?? owner; // a page with no paragraph start continues the previous page's section
+    const sec = sections[owner];
+    const st = secStart.get(owner);
+    if (!sec || !st) continue;
+    const type = sec.titlePg && page === st.firstPage ? "first" : "default";
+    // header first, as a reader (and the pdf parser) meets it first when both show a number
+    const candidates = [resolve(owner, "header", type), resolve(owner, "footer", type)].filter((h): h is HeaderFooterInfo => !!h);
+    const field = candidates.find((h) => h.hasPageField);
+    const typed = candidates.find((h) => /^(\d{1,3}|[ivxlc]{1,7})$/i.test(h.text.replace(/[\s.\-–]/g, "")));
+    const hf = field ?? typed;
+    if (!hf) continue;
+    let text: string;
+    let value: number | undefined;
+    if (field) {
+      value = st.start + (page - st.firstPage);
+      text = sec.pgNumFmt === "lowerRoman" ? toRoman(value).toLowerCase() : sec.pgNumFmt === "upperRoman" ? toRoman(value) : String(value);
+    } else {
+      text = hf.text.replace(/[\s.\-–]/g, "");
+      value = /^\d+$/.test(text) ? parseInt(text, 10) : romanToInt(text);
+    }
+    const kind: PageNumberInfo["kind"] = /^\d+$/.test(text) ? "arabic" : /^[ivxlc]+$/i.test(text) ? "roman" : "other";
+    const horiz = hf.align === "center" ? "center" : hf.align === "right" ? "right" : "left";
+    out[page - 1] = {
+      text,
+      value,
+      kind,
+      position: `${hf.kind}-${horiz}`,
+      font: hf.fonts.find((f) => !isArialNarrow(f)) ?? hf.fonts[0],
+      size: hf.sizes.find((s) => Math.abs(s - 12) > 0.6) ?? hf.sizes[0],
+      manual: !field || undefined,
+    };
+  }
+  return out;
 }
 
 interface RunFlags {

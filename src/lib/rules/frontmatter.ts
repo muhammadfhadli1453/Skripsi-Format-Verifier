@@ -1,7 +1,10 @@
 import type { RuleContext } from "./context";
 import type { LogicalSection, Para, SectionKind } from "../model";
+import { toRoman } from "../model";
 import { TITLE_LOWERCASE, dominantSize, fmtSpacing, isMostlyBold, isUpperCase, locOf, snippet, words } from "./util";
 import { captionsInBody, subHeadingsInBody } from "./body";
+
+export { toRoman };
 
 const CAT_STRUCT = "Struktur Dokumen";
 const CAT_PENGESAHAN = "Lembar Pengesahan";
@@ -547,12 +550,6 @@ function abstrak(ctx: RuleContext, s: LogicalSection) {
 
 /* ------------------------------------------------------------------ */
 
-export function toRoman(num: number): string {
-  const map: [number, string][] = [[10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
-  let out = "";
-  for (const [v, s] of map) while (num >= v) (out += s), (num -= v);
-  return out || String(num);
-}
 function capital(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }

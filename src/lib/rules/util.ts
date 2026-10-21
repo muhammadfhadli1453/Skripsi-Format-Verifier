@@ -118,7 +118,7 @@ export function snippet(text: string, max = 90): string {
 }
 
 export function locOf(p: Para, sectionLabel?: string, snip?: string): IssueLocation {
-  return { page: p.page, paraIndex: p.index, section: sectionLabel, snippet: snip ?? snippet(p.text) };
+  return { page: p.page, printedPage: p.printedPageText, paraIndex: p.index, section: sectionLabel, snippet: snip ?? snippet(p.text) };
 }
 
 type Extra = Partial<Omit<Issue, "id" | "severity" | "category" | "title" | "detail" | "location">> & { fold?: boolean; foldKey?: string };

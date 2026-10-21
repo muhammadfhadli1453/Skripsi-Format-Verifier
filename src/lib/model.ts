@@ -12,6 +12,26 @@ export const cmToPt = (cm: number) => cm * PT_PER_CM;
 export const ptToCm = (pt: number) => pt / PT_PER_CM;
 export const EMU_PER_CM = 360000;
 
+export function toRoman(num: number): string {
+  const map: [number, string][] = [[1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
+  let out = "";
+  for (const [v, s] of map) while (num >= v) (out += s), (num -= v);
+  return out || String(num);
+}
+
+export function romanToInt(s: string): number | undefined {
+  const map: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 };
+  const t = s.toLowerCase();
+  if (!/^[ivxlcdm]+$/.test(t)) return undefined;
+  let total = 0;
+  for (let i = 0; i < t.length; i++) {
+    const v = map[t[i]];
+    const next = map[t[i + 1]] ?? 0;
+    total += v < next ? -v : v;
+  }
+  return total;
+}
+
 export interface Run {
   text: string;
   font?: string;
@@ -42,6 +62,8 @@ export interface Para {
   page?: number;
   /** docx: estimated page number printed in header/footer (from section numbering settings) */
   printedPage?: number;
+  /** page number as printed on this paragraph's page ("1", "vii"); undefined when the page shows none */
+  printedPageText?: string;
   align?: Align;
   /** docx: left-aligned paragraph visually centred with a centre tab stop */
   centeredByTab?: boolean;
@@ -121,6 +143,8 @@ export interface PageNumberInfo {
   position: "footer-center" | "footer-right" | "footer-left" | "header-center" | "header-right" | "header-left";
   font?: string;
   size?: number;
+  /** docx: number typed as plain text in the header/footer instead of a PAGE field */
+  manual?: boolean;
 }
 
 export interface PageInfo {
@@ -142,6 +166,8 @@ export interface NormalizedDoc {
   tables: TableInfo[];
   sections: SectionProps[];
   pages?: PageInfo[];
+  /** docx: simulated page number per estimated physical page (index = page - 1); undefined = no number shown */
+  docxPageNumbers?: (PageNumberInfo | undefined)[];
   /** font name -> number of characters */
   fontUsage: Record<string, number>;
   warnings: string[];
@@ -192,6 +218,8 @@ export type Severity = "error" | "warning" | "info";
 
 export interface IssueLocation {
   page?: number;
+  /** page number printed on that page ("1", "vii"), stable across viewers unlike the physical page */
+  printedPage?: string;
   paraIndex?: number;
   section?: string;
   snippet?: string;

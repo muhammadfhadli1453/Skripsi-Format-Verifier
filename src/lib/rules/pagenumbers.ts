@@ -13,9 +13,15 @@ export function pageNumberRules(ctx: RuleContext) {
 
 const ROMAN_KINDS = new Set<SectionKind>(["pengesahan", "pernyataan", "persembahan", "kata-pengantar", "daftar-isi", "daftar-gambar", "daftar-tabel", "daftar-lampiran", "abstrak", "abstract"]);
 
+type PageView = Pick<PageInfo, "number" | "firstParaIndex" | "pageNumber">;
+
 function pdfPageNumbers(ctx: RuleContext) {
+  checkPages(ctx, ctx.doc.pages ?? []);
+}
+
+/** Walks the pages in order and checks what number each one prints (pdf: read from the page; docx: simulated from section settings). */
+function checkPages(ctx: RuleContext, pages: PageView[]) {
   const { c, doc } = ctx;
-  const pages = doc.pages ?? [];
   let lastArabic: number | undefined;
   let lastRoman: number | undefined;
   let babStarted = false;
@@ -48,7 +54,8 @@ function pdfPageNumbers(ctx: RuleContext) {
       pushMissing(sec?.label ?? kind, pg.number);
       continue;
     }
-    const loc = { page: pg.number, section: sec?.label, snippet: `nomor halaman "${pn.text}"` };
+    const loc = { page: pg.number, printedPage: pn.text, section: sec?.label, snippet: `nomor halaman "${pn.text}"` };
+    if (pn.manual) c.warn("PAGE-16", CAT, "Nomor halaman diketik manual, bukan field PAGE", `Hal. ${pg.number} (${sec?.label}): nomor "${pn.text}" diketik sebagai teks biasa di ${posLabel(pn.position)}. Nomor seperti ini tidak ikut berubah bila halaman bergeser.`, loc, { fold: true, fix: "Hapus angka tersebut lalu Insert → Page Number → Current Position → Plain Number, dan atur Start at/Continue lewat Format Page Numbers." });
     // font
     if (pn.font && !isArialNarrow(pn.font)) c.error("PAGE-02", CAT, `Font nomor halaman bukan Arial Narrow (${pn.font})`, `Nomor halaman "${pn.text}" pada hal. ${pg.number} menggunakan font ${pn.font} ${pn.size ?? ""} pt. Panduan: Arial Narrow 12 pt.`, loc, { expected: "Arial Narrow 12 pt", actual: `${pn.font} ${pn.size ?? ""} pt`, fold: true, fix: "Double-click area footer/header → blok nomor → font Arial Narrow 12." });
     if (pn.size !== undefined && Math.abs(pn.size - 12) > 0.6) c.error("PAGE-03", CAT, "Ukuran font nomor halaman bukan 12 pt", `Nomor halaman "${pn.text}" pada hal. ${pg.number} berukuran ${pn.size} pt.`, loc, { expected: "12 pt", actual: `${pn.size} pt`, fold: true });
@@ -95,56 +102,32 @@ function docxPageNumbers(ctx: RuleContext) {
   if (doc.sections.length <= 1) {
     c.error("PAGE-13", CAT, "Dokumen hanya memiliki satu section", "Penomoran romawi (halaman awal), angka mulai 1 (BAB I), dan posisi nomor yang berbeda (footer tengah pada halaman pertama BAB, header kanan pada halaman lanjutan) memerlukan Section Break (Layout → Breaks → Next Page) untuk setiap bagian/BAB.", {});
   }
+  // page-level checks on the numbers Word would print (simulated by the parser from the section settings)
+  const pageCount = doc.paras.reduce((m, p) => Math.max(m, p.page ?? 0), 0);
+  const pages: PageView[] = [];
+  let carry = 0;
+  for (let n = 1; n <= pageCount; n++) {
+    const onPage = doc.paras.filter((p) => p.page === n);
+    const first = onPage.find((p) => !p.isEmpty) ?? onPage[0];
+    if (first) carry = first.index;
+    pages.push({ number: n, firstParaIndex: carry, pageNumber: doc.docxPageNumbers?.[n - 1] });
+    if (onPage.length) carry = onPage[onPage.length - 1].index; // a page with no paragraph start continues the previous one
+  }
+  checkPages(ctx, pages);
+
+  // section-level advice that only a .docx can give
   const secOfPara = (i: number) => doc.sections.find((s) => s.firstParaIndex <= i && i <= s.lastParaIndex);
   const checkedSections = new Set<number>();
   for (const ls of ctx.sections) {
-    if (ls.headingParaIndex === undefined) continue;
+    if (ls.kind !== "bab" || ls.headingParaIndex === undefined) continue;
     const sec = secOfPara(ls.headingParaIndex);
     if (!sec) continue;
-    const h = doc.paras[ls.headingParaIndex];
-    const loc = locOf(h, ls.label);
-    if (ls.kind === "pengesahan") continue; // usually unnumbered (counted as ii)
-    if ((ls.kind === "abstrak" || ls.kind === "abstract") && ctx.docType === "skripsi") continue; // PPTA 3.1.4: number not printed
-    if (ROMAN_KINDS.has(ls.kind)) {
-      if (!checkedSections.has(sec.index) && sec.pgNumFmt !== "lowerRoman") c.error("PAGE-04", CAT, "Halaman awal (sebelum BAB I) harus bernomor Romawi kecil", `Section yang memuat "${ls.label}" menggunakan format nomor "${sec.pgNumFmt ?? "decimal"}". Insert → Page Number → Format Page Numbers → Number format: i, ii, iii.`, loc, { fold: true });
-      const footer = sec.headersFooters.find((hf) => hf.kind === "footer" && hf.type === "default");
-      const anyPage = sec.headersFooters.some((hf) => hf.hasPageField);
-      if (!checkedSections.has(sec.index)) {
-        if (!anyPage) c.error("PAGE-12", CAT, `Nomor halaman tidak ditemukan pada ${ls.label}`, `Section yang memuat "${ls.label}" tidak memiliki field PAGE di header/footer.`, loc, { fold: true });
-        else if (footer && footer.hasPageField && footer.align !== "center") c.error("PAGE-07", CAT, "Posisi nomor halaman awal harus di footer tengah", `Footer pada section "${ls.label}" rata ${footer.align}.`, loc, { fold: true });
-        checkFont(ctx, sec, loc);
-      }
-      checkedSections.add(sec.index);
-    } else if (ls.kind === "bab") {
-      if (ls.chapter === 1) {
-        if (sec.pgNumStart !== 1) c.error("PAGE-09", CAT, "Penomoran BAB I harus dimulai dari 1", `Section BAB I tidak mengatur "Start at: 1" (pgNumType start=${sec.pgNumStart ?? "tidak diatur"}).`, loc, { fix: "Insert → Page Number → Format Page Numbers → Start at: 1." });
-        if (sec.pgNumFmt && sec.pgNumFmt !== "decimal") c.error("PAGE-08", CAT, "Halaman BAB harus bernomor angka", `Section BAB I memakai format "${sec.pgNumFmt}".`, loc);
-      } else if (sec.pgNumStart !== undefined && !checkedSections.has(sec.index)) {
-        c.info("PAGE-10", CAT, `Section ${ls.label} mengatur Start at ${sec.pgNumStart}`, "Pastikan nomor halaman berlanjut dari BAB sebelumnya (Continue from previous section) agar tidak terjadi lompatan/duplikasi.", loc, { fold: true });
-      }
-      const startsSection = doc.paras.slice(sec.firstParaIndex, ls.headingParaIndex).every((p) => p.isEmpty);
-      if (!startsSection) c.warn("PAGE-14", CAT, `${ls.label} tidak berada di awal section`, "Setiap BAB harus diawali Section Break (Next Page) agar posisi nomor halaman (footer tengah di halaman pertama, header kanan di halaman berikutnya) dapat diatur.", loc, { fold: true });
-      if (!checkedSections.has(sec.index)) {
-        if (!sec.titlePg) c.error("PAGE-11", CAT, `Section ${ls.label} tidak mengaktifkan "Different First Page"`, "Halaman pertama BAB bernomor di footer tengah, halaman berikutnya di header kanan atas: aktifkan Header & Footer → Different First Page.", loc, { fold: true });
-        const firstFooter = sec.headersFooters.find((hf) => hf.kind === "footer" && hf.type === "first");
-        const defHeader = sec.headersFooters.find((hf) => hf.kind === "header" && hf.type === "default");
-        if (sec.titlePg && !(firstFooter?.hasPageField)) c.error("PAGE-11", CAT, `Footer halaman pertama ${ls.label} tidak memuat nomor halaman`, "First Page Footer harus berisi nomor halaman rata tengah.", loc, { fold: true });
-        else if (firstFooter?.hasPageField && firstFooter.align !== "center") c.error("PAGE-11", CAT, `Nomor halaman pertama ${ls.label} tidak rata tengah`, `First Page Footer rata ${firstFooter.align}.`, loc, { fold: true });
-        if (!(defHeader?.hasPageField)) c.error("PAGE-11", CAT, `Header ${ls.label} tidak memuat nomor halaman`, "Header halaman lanjutan BAB harus berisi nomor halaman rata kanan.", loc, { fold: true });
-        else if (defHeader.align !== "right") c.error("PAGE-11", CAT, `Nomor halaman lanjutan ${ls.label} tidak rata kanan`, `Header rata ${defHeader.align}.`, loc, { fold: true });
-        checkFont(ctx, sec, loc);
-      }
-      checkedSections.add(sec.index);
+    const loc = locOf(doc.paras[ls.headingParaIndex], ls.label);
+    if (ls.chapter !== 1 && sec.pgNumStart !== undefined && !checkedSections.has(sec.index)) {
+      c.info("PAGE-10", CAT, `Section ${ls.label} mengatur Start at ${sec.pgNumStart}`, "Pastikan nomor halaman berlanjut dari BAB sebelumnya (Continue from previous section) agar tidak terjadi lompatan/duplikasi.", loc, { fold: true });
     }
-  }
-}
-
-function checkFont(ctx: RuleContext, sec: { headersFooters: { fonts: string[]; sizes: number[]; hasPageField: boolean }[] }, loc: ReturnType<typeof locOf>) {
-  for (const hf of sec.headersFooters) {
-    if (!hf.hasPageField) continue;
-    const bad = hf.fonts.filter((f) => !isArialNarrow(f));
-    if (bad.length) ctx.c.error("PAGE-02", CAT, `Font nomor halaman bukan Arial Narrow (${bad.join(", ")})`, "Nomor halaman harus Arial Narrow 12 pt.", loc, { fold: true });
-    const badSize = hf.sizes.filter((s) => Math.abs(s - 12) > 0.6);
-    if (badSize.length) ctx.c.error("PAGE-03", CAT, "Ukuran font nomor halaman bukan 12 pt", `Ditemukan ${badSize.join(", ")} pt.`, loc, { fold: true });
+    const startsSection = doc.paras.slice(sec.firstParaIndex, ls.headingParaIndex).every((p) => p.isEmpty);
+    if (!startsSection) c.warn("PAGE-14", CAT, `${ls.label} tidak berada di awal section`, "Setiap BAB harus diawali Section Break (Next Page) agar posisi nomor halaman (footer tengah di halaman pertama, header kanan di halaman berikutnya) dapat diatur.", loc, { fold: true });
+    checkedSections.add(sec.index);
   }
 }

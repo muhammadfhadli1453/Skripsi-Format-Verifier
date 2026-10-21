@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import type { Issue, Severity, VerifyReport } from "@/lib/model";
 
 const SEV: Record<Severity, { label: string; badge: string; dot: string }> = {
@@ -14,6 +15,29 @@ export function ReportView({ report }: { report: VerifyReport }) {
   const [sevFilter, setSevFilter] = useState<Record<Severity, boolean>>({ error: true, warning: true, info: true });
   const [catFilter, setCatFilter] = useState<string>("all");
   const [query, setQuery] = useState("");
+  // While printing (Cetak button or Ctrl+P) every issue and nested list is expanded, and the page title is set so
+  // the browser's "Save as PDF" defaults to "hasil pemeriksaan format - <nama berkas>.pdf".
+  const [printing, setPrinting] = useState(false);
+  const printTitle = `hasil pemeriksaan format - ${baseName(report.fileName)}`;
+  useEffect(() => {
+    let previousTitle = document.title;
+    const before = () => {
+      previousTitle = document.title;
+      document.title = printTitle;
+      flushSync(() => setPrinting(true)); // commit synchronously so the print snapshot includes expanded details
+    };
+    const after = () => {
+      document.title = previousTitle;
+      setPrinting(false);
+    };
+    window.addEventListener("beforeprint", before);
+    window.addEventListener("afterprint", after);
+    return () => {
+      window.removeEventListener("beforeprint", before);
+      window.removeEventListener("afterprint", after);
+    };
+  }, [printTitle]);
+  const [showCapabilities, setShowCapabilities] = useState(false);
 
   const categories = useMemo(() => {
     const m = new Map<string, number>();
@@ -46,6 +70,13 @@ export function ReportView({ report }: { report: VerifyReport }) {
 
   return (
     <section className="space-y-6">
+      <div className="hidden print:block">
+        <p className="text-xs uppercase tracking-wider">Program Studi Informatika · Universitas Khairun</p>
+        <h1 className="text-xl font-bold">Hasil Pemeriksaan Format</h1>
+        <p className="text-sm">
+          {report.fileName} · dicetak {new Date().toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })}
+        </p>
+      </div>
       {/* summary */}
       <div className="rounded-2xl border border-border bg-card p-5 sm:p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -67,7 +98,10 @@ export function ReportView({ report }: { report: VerifyReport }) {
           </div>
           <div className="flex items-center gap-5">
             <div className="text-center">
-              <div className={`text-4xl font-bold tabular-nums ${scoreColor}`}>{score}</div>
+              <div className={`text-4xl font-bold tabular-nums ${scoreColor}`}>
+                {score}
+                <span className="text-lg font-semibold text-muted">/100</span>
+              </div>
               <div className="text-xs text-muted">skor format</div>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
@@ -122,7 +156,7 @@ export function ReportView({ report }: { report: VerifyReport }) {
             </div>
             <ul className="divide-y divide-border">
               {list.map((i, idx) => (
-                <IssueItem key={`${i.id}-${idx}`} issue={i} />
+                <IssueItem key={`${i.id}-${idx}`} issue={i} forceOpen={printing} estimatedPages={report.source === "docx"} />
               ))}
             </ul>
           </div>
@@ -131,7 +165,11 @@ export function ReportView({ report }: { report: VerifyReport }) {
       {visible.length === 0 && report.issues.length > 0 && <p className="text-sm text-muted">Tidak ada temuan yang cocok dengan filter.</p>}
 
       {/* capabilities */}
-      <details className="rounded-2xl border border-border bg-card p-5 text-sm">
+      <details
+        className="rounded-2xl border border-border bg-card p-5 text-sm break-inside-avoid"
+        open={showCapabilities || printing}
+        onToggle={(e) => !printing && setShowCapabilities((e.currentTarget as HTMLDetailsElement).open)}
+      >
         <summary className="cursor-pointer font-medium">Cakupan & keterbatasan pemeriksaan ({report.source.toUpperCase()})</summary>
         <p className="mt-3 text-xs text-muted">
           Aturan bertanda <span className="font-semibold">PPTA</span> berasal dari Panduan Penulisan Tugas Akhir Universitas Khairun (2023), panduan terbaru. PPTA diikuti bila mengatur dokumen yang sama (proposal/skripsi S1): abstrak, lembar pengesahan, pernyataan orisinalitas, urutan bagian awal skripsi, dan huruf judul gambar/tabel. Format Prodi Informatika tetap dipakai untuk hal yang tidak diatur PPTA (huruf, ukuran, spasi, margin, sampul, posisi nomor halaman) dan untuk laporan Kerja Praktik.
@@ -164,12 +202,14 @@ export function ReportView({ report }: { report: VerifyReport }) {
   );
 }
 
-function IssueItem({ issue }: { issue: Issue }) {
+function IssueItem({ issue, forceOpen, estimatedPages }: { issue: Issue; forceOpen: boolean; estimatedPages: boolean }) {
   const [open, setOpen] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const expanded = open || forceOpen;
   const more = issue.occurrences?.length ?? 0;
-  const loc = formatLoc(issue.location);
+  const loc = formatLoc(issue.location, estimatedPages);
   return (
-    <li className="px-5 py-3">
+    <li className="px-5 py-3 break-inside-avoid">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-start gap-3 text-left">
         <span className={`mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${SEV[issue.severity].badge}`}>{SEV[issue.severity].label}</span>
         <span className="min-w-0 flex-1">
@@ -187,13 +227,18 @@ function IssueItem({ issue }: { issue: Issue }) {
           )}
           <span className="block text-xs text-muted">
             <span className="font-mono">{issue.id}</span>
-            {loc && <> · {loc}</>}
+            {loc && (
+              <>
+                {" · "}
+                <span title={estimatedPages ? "hal. = urutan halaman fisik, diperkirakan dari tata letak terakhir yang disimpan Word (bisa berbeda di aplikasi/komputer lain); no. = nomor yang tercetak di halaman tersebut" : "hal. = urutan halaman fisik di PDF; no. = nomor yang tercetak di halaman tersebut"}>{loc}</span>
+              </>
+            )}
             {more > 0 && <> · +{more} lokasi lain</>}
           </span>
         </span>
-        <span className="shrink-0 text-muted">{open ? "−" : "+"}</span>
+        <span className="shrink-0 text-muted print:hidden">{expanded ? "−" : "+"}</span>
       </button>
-      {open && (
+      {expanded && (
         <div className="mt-3 space-y-2 pl-0 sm:pl-[4.5rem] text-sm">
           {issue.detail && <p className="leading-relaxed">{issue.detail}</p>}
           {(issue.expected || issue.actual) && (
@@ -224,12 +269,12 @@ function IssueItem({ issue }: { issue: Issue }) {
             </p>
           )}
           {more > 0 && (
-            <details className="text-xs">
+            <details className="text-xs" open={showMore || forceOpen} onToggle={(e) => !forceOpen && setShowMore((e.currentTarget as HTMLDetailsElement).open)}>
               <summary className="cursor-pointer text-muted">Lokasi lain ({more})</summary>
-              <ul className="mt-1 max-h-56 space-y-0.5 overflow-auto pl-4">
+              <ul className="mt-1 max-h-56 space-y-0.5 overflow-auto pl-4 print:max-h-none print:overflow-visible">
                 {issue.occurrences!.map((o, k) => (
                   <li key={k} className="list-disc">
-                    {formatLoc(o) || "—"}
+                    {formatLoc(o, estimatedPages) || "—"}
                     {o.snippet && <span className="text-muted"> — “{o.snippet.slice(0, 80)}”</span>}
                   </li>
                 ))}
@@ -242,9 +287,15 @@ function IssueItem({ issue }: { issue: Issue }) {
   );
 }
 
-function formatLoc(l: Issue["location"]): string {
+/** "folder/Proposal_X.docx" → "Proposal_X" */
+function baseName(fileName: string): string {
+  return fileName.split(/[\\/]/).pop()!.replace(/\.(docx|pdf)$/i, "");
+}
+
+/** "hal. 9 (no. 1)": physical page (± when estimated from a .docx) plus the number printed on it */
+function formatLoc(l: Issue["location"], estimatedPages: boolean): string {
   const parts: string[] = [];
-  if (l.page) parts.push(`hal. ${l.page}`);
+  if (l.page) parts.push(`hal. ${estimatedPages ? "±" : ""}${l.page}${l.printedPage ? ` (no. ${l.printedPage})` : ""}`);
   if (l.section) parts.push(l.section);
   else if (l.paraIndex !== undefined) parts.push(`paragraf #${l.paraIndex + 1}`);
   return parts.join(" · ");

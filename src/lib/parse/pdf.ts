@@ -1,6 +1,6 @@
 import * as mupdf from "mupdf";
 import type { ImageInfo, NormalizedDoc, PageInfo, PageNumberInfo, Para, Run, SectionProps } from "../model";
-import { ptToCm } from "../model";
+import { ptToCm, romanToInt } from "../model";
 import { normalizeFontName } from "./fonts";
 
 /** Arial / Arial Narrow single line height ≈ 1.15 × font size in Word. */
@@ -73,19 +73,6 @@ function roundSpacing(ratio: number): number | undefined {
     }
   }
   return bestD <= 0.14 ? best : Math.round(ratio * 100) / 100;
-}
-
-function romanToInt(s: string): number | undefined {
-  const map: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 };
-  const t = s.toLowerCase();
-  if (!/^[ivxlcdm]+$/.test(t)) return undefined;
-  let total = 0;
-  for (let i = 0; i < t.length; i++) {
-    const v = map[t[i]];
-    const next = map[t[i + 1]] ?? 0;
-    total += v < next ? -v : v;
-  }
-  return total;
 }
 
 export async function parsePdf(buffer: Buffer, fileName: string): Promise<NormalizedDoc> {
@@ -508,6 +495,7 @@ export async function parsePdf(buffer: Buffer, fileName: string): Promise<Normal
       lastParaIndex: paras.length - 1,
       images,
     });
+    if (pageNumber) for (let i = firstParaIndex; i < paras.length; i++) paras[i].printedPageText = pageNumber.text;
     sections.push({
       index: p,
       pageWidth: pageW,
