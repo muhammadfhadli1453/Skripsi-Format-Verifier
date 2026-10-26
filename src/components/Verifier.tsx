@@ -168,7 +168,7 @@ export function Verifier() {
           </button>
         </div>
 
-        {storage && <p className="mt-4 text-xs text-muted">Setiap naskah yang diperiksa masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul (NPM ditampilkan tersamar). Berkas disimpan secara privat; hanya pemegang tautan unduhan yang dapat mengunduhnya.</p>}
+        {storage && <p className="mt-4 text-xs text-muted">Setiap naskah yang diperiksa masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul. Berkas disimpan secara privat; hanya pemegang tautan unduhan yang dapat mengunduhnya.</p>}
         {error && <p className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       </section>
 

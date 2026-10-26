@@ -15,7 +15,7 @@ export interface LeaderboardEntry {
   rank: number;
   /** undefined when the cover had no readable name */
   name?: string;
-  /** masked, e.g. 0735••••077; undefined when the cover had no NPM */
+  /** undefined when the cover had no NPM */
   studentId?: string;
   docType: DocType;
   score: number;
@@ -60,11 +60,6 @@ export async function findSubmissionFile(id: string, token: string): Promise<{ b
   return { blobPathname: row.blob_pathname as string, fileName: row.file_name as string };
 }
 
-export function maskStudentId(id: string): string {
-  if (id.length <= 7) return id.slice(0, 2) + "•".repeat(id.length - 2);
-  return id.slice(0, 4) + "•".repeat(id.length - 7) + id.slice(-3);
-}
-
 /**
  * Each student's best score, top `limit`; ties go to the earlier upload.
  * Uploads without a readable NPM can't be grouped, so each counts on its own.
@@ -83,7 +78,7 @@ export async function topScores(docType: DocType | undefined, limit = 5): Promis
   return rows.map((r, i) => ({
     rank: i + 1,
     name: (r.display_name as string | null) ?? undefined,
-    studentId: r.student_id ? maskStudentId(r.student_id as string) : undefined,
+    studentId: (r.student_id as string | null) ?? undefined,
     docType: r.doc_type as DocType,
     score: r.score as number,
     createdAt: new Date(r.created_at as string).toISOString(),

@@ -69,7 +69,7 @@ disembunyikan). Catatan: tanpa Blob, berkas dikirim di badan request, yang di Ve
 Aturan: skor = skor **berbasis aturan saja**. Temuan AI tetap ditampilkan dan dihitung jumlahnya, tetapi
 tidak mengubah skor, sehingga skor di laporan sama dengan skor di papan peringkat. Setiap naskah yang diperiksa
 otomatis masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul (baris setelah OLEH;
-`src/lib/student.ts`), NPM ditampilkan tersamar. Satu baris per NPM (skor terbaiknya); naskah tanpa NPM terbaca
+`src/lib/student.ts`). Satu baris per NPM (skor terbaiknya); naskah tanpa NPM terbaca
 tampil sendiri sebagai "Tanpa nama". Seri dimenangkan unggahan lebih awal. Tautan unduhan memuat token rahasia yang
 hanya dikirim ke pengunggah dan disimpan di peramban (`localStorage`); basis data hanya menyimpan hash-nya.
 
