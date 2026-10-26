@@ -66,10 +66,12 @@ src/components/*            UI unggah, laporan, papan peringkat, unggahan saya
 Tanpa kedua variabel itu aplikasi tetap berjalan seperti semula (berkas tidak disimpan, papan peringkat
 disembunyikan). Catatan: tanpa Blob, berkas dikirim di badan request, yang di Vercel dibatasi 4,5 MB.
 
-Aturan: skor peringkat = skor **berbasis aturan saja** (temuan AI tidak dihitung, jadi mematikan AI tidak
-menguntungkan); ikut peringkat bersifat opsional (nama + NPM, NPM ditampilkan tersamar); satu baris per NPM
-(skor terbaiknya); seri dimenangkan unggahan lebih awal. Tautan unduhan memuat token rahasia yang hanya
-dikirim ke pengunggah dan disimpan di peramban (`localStorage`); basis data hanya menyimpan hash-nya.
+Aturan: skor = skor **berbasis aturan saja**. Temuan AI tetap ditampilkan dan dihitung jumlahnya, tetapi
+tidak mengubah skor, sehingga skor di laporan sama dengan skor di papan peringkat. Setiap naskah yang diperiksa
+otomatis masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul (baris setelah OLEH;
+`src/lib/student.ts`), NPM ditampilkan tersamar. Satu baris per NPM (skor terbaiknya); naskah tanpa NPM terbaca
+tampil sendiri sebagai "Tanpa nama". Seri dimenangkan unggahan lebih awal. Tautan unduhan memuat token rahasia yang
+hanya dikirim ke pengunggah dan disimpan di peramban (`localStorage`); basis data hanya menyimpan hash-nya.
 
 ## Cakupan aturan (ringkas)
 

@@ -6,7 +6,7 @@ import { detectSections } from "@/lib/sections";
 import { aiAvailable, aiConfig, missingKeyMessage } from "@/lib/ai/provider";
 import { runAiChecks } from "@/lib/ai/checks";
 import { storageEnabled } from "@/lib/storage/db";
-import { UPLOAD_PREFIX, parseOptIn, pathnameUsed, saveSubmission, type LeaderboardOptIn } from "@/lib/storage/submissions";
+import { UPLOAD_PREFIX, pathnameUsed, saveSubmission } from "@/lib/storage/submissions";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -28,7 +28,6 @@ interface Input {
   wantAi: boolean;
   /** set when the file came through Blob and should be kept */
   blobPathname?: string;
-  optIn?: LeaderboardOptIn;
 }
 
 const pickDocType = (raw: unknown) => (DOC_TYPES.includes(String(raw ?? "auto") as DocType | "auto") ? String(raw ?? "auto") : "auto") as DocType | "auto";
@@ -50,21 +49,19 @@ async function readMultipart(req: Request): Promise<Input> {
 /** With storage: the browser already uploaded to private Blob and sends the pathname. */
 async function readFromBlob(req: Request, claim: (pathname: string) => void): Promise<Input> {
   if (!storageEnabled()) throw new BadRequest("Penyimpanan berkas belum dikonfigurasi.", 503);
-  const body = (await req.json()) as { blobPathname?: string; fileName?: string; docType?: string; ai?: boolean; leaderboard?: unknown };
+  const body = (await req.json()) as { blobPathname?: string; fileName?: string; docType?: string; ai?: boolean };
   const blobPathname = String(body.blobPathname ?? "");
   if (!blobPathname.startsWith(UPLOAD_PREFIX)) throw new BadRequest("Berkas tidak valid.");
   // a pathname belongs to the first request that claims it, so nobody can obtain a download token for someone else's upload
   if (await pathnameUsed(blobPathname)) throw new BadRequest("Berkas ini sudah diperiksa. Unggah ulang untuk memeriksa lagi.", 409);
   claim(blobPathname);
-  const optIn = parseOptIn(body.leaderboard);
-  if (typeof optIn === "string") throw new BadRequest(optIn);
   const name = String(body.fileName || blobPathname.slice(UPLOAD_PREFIX.length)) || "dokumen";
   checkName(name);
   const blob = await get(blobPathname, { access: "private", useCache: false });
   if (!blob || blob.statusCode !== 200) throw new BadRequest("Berkas tidak ditemukan di penyimpanan.", 404);
   if (blob.blob.size > MAX_BYTES) throw new BadRequest("Berkas terlalu besar (maks. 40 MB).", 413);
   const buffer = Buffer.from(await new Response(blob.stream).arrayBuffer());
-  return { buffer, name, docType: pickDocType(body.docType), wantAi: body.ai === true, blobPathname, optIn };
+  return { buffer, name, docType: pickDocType(body.docType), wantAi: body.ai === true, blobPathname };
 }
 
 export async function POST(req: Request) {
@@ -89,7 +86,9 @@ export async function POST(req: Request) {
         finalReport = {
           ...report,
           issues,
-          summary: { errors, warnings, infos, score: Math.max(0, Math.round(100 - errors * 4 - warnings * 1.5 - infos * 0.5)) },
+          // AI findings are listed and counted but never change the score: they vary by model and run,
+          // and the leaderboard must show the same number as the report
+          summary: { errors, warnings, infos, score: report.summary.score },
           aiSummary: ai.summary,
           ai: { used: true, model: ai.model ?? aiConfig()?.label, error: ai.error, inputTokens: ai.inputTokens, outputTokens: ai.outputTokens },
         };
@@ -97,14 +96,13 @@ export async function POST(req: Request) {
     }
 
     if (input.blobPathname) {
-      // the leaderboard ranks the rule-based score, so turning AI off never helps a student rank higher
       const rankedScore = report.summary.score;
       try {
-        const sub = await saveSubmission(input.blobPathname, report, input.optIn);
+        const sub = await saveSubmission(input.blobPathname, report);
         saved = true;
-        finalReport = { ...finalReport, submission: { id: sub.id, downloadUrl: sub.downloadUrl, onLeaderboard: !!input.optIn, rankedScore } };
+        finalReport = { ...finalReport, submission: { id: sub.id, downloadUrl: sub.downloadUrl, rankedScore } };
       } catch (e) {
-        finalReport = { ...finalReport, submission: { onLeaderboard: false, rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` } };
+        finalReport = { ...finalReport, submission: { rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` } };
       }
     }
     return NextResponse.json(finalReport);

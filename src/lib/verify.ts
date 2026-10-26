@@ -2,6 +2,7 @@ import type { DocType, Issue, NormalizedDoc, VerifyReport } from "./model";
 import { parseDocument } from "./parse";
 import { detectDocType, detectSections } from "./sections";
 import { runRules } from "./rules";
+import { extractStudent } from "./student";
 
 export interface VerifyOptions {
   docType?: DocType | "auto";
@@ -40,6 +41,7 @@ export function buildReport(doc: NormalizedDoc, docType: DocType, detected: DocT
     paragraphCount: doc.paras.filter((p) => !p.isEmpty).length,
     sections: sections.map((s) => ({ kind: s.kind, label: s.label, firstPage: s.firstPage, lastPage: s.lastPage })),
     summary: { errors, warnings, infos, score },
+    student: extractStudent(doc, sections),
     issues,
     capabilities,
     limitations: [...limitations, ...doc.warnings],

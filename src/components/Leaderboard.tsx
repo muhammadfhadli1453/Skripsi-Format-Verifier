@@ -5,8 +5,8 @@ import type { DocType } from "@/lib/model";
 
 interface Entry {
   rank: number;
-  name: string;
-  studentId: string;
+  name?: string;
+  studentId?: string;
   docType: DocType;
   score: number;
   createdAt: string;
@@ -53,21 +53,21 @@ export function Leaderboard({ refreshKey }: { refreshKey: number }) {
           ))}
         </div>
       </div>
-      <p className="mt-1 text-xs text-muted">5 skor format tertinggi (pemeriksaan berbasis aturan, tanpa AI). Satu baris per NPM, diambil dari skor terbaiknya.</p>
+      <p className="mt-1 text-xs text-muted">5 skor format tertinggi (pemeriksaan berbasis aturan, tanpa AI). Nama dan NPM dibaca dari sampul; satu baris per NPM, diambil dari skor terbaiknya.</p>
       {error && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{error}</p>}
       {entries === null ? (
         <p className="mt-4 text-sm text-muted">Memuat…</p>
       ) : entries.length === 0 ? (
-        <p className="mt-4 text-sm text-muted">Belum ada peserta. Centang &ldquo;Tampilkan di papan peringkat&rdquo; saat memeriksa naskah.</p>
+        <p className="mt-4 text-sm text-muted">Belum ada naskah yang diperiksa.</p>
       ) : (
         <ol className="mt-4 divide-y divide-border">
           {entries.map((e) => (
-            <li key={`${e.rank}-${e.studentId}`} className="flex items-center gap-3 py-2.5">
+            <li key={e.rank} className="flex items-center gap-3 py-2.5">
               <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${e.rank === 1 ? "bg-accent text-white" : "bg-accent/10 text-accent"}`}>{e.rank}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{e.name}</p>
+                <p className={`truncate text-sm font-medium ${e.name ? "" : "italic text-muted"}`}>{e.name ?? "Tanpa nama"}</p>
                 <p className="text-xs text-muted">
-                  <span className="font-mono">{e.studentId}</span> · {DOC_LABEL[e.docType]} · {new Date(e.createdAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                  {e.studentId && <span className="font-mono">{e.studentId} · </span>}{DOC_LABEL[e.docType]} · {new Date(e.createdAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
                 </p>
               </div>
               <span className="text-lg font-bold tabular-nums">{e.score}</span>

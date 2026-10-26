@@ -14,7 +14,6 @@ interface ServerStatus {
   ai: { available: boolean; label?: string };
 }
 
-const PROFILE_KEY = "skripsi-verifier:profile";
 const MIME = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
 
 /** Blob pathnames: keep the name readable but drop characters that need escaping. */
@@ -29,9 +28,6 @@ export function Verifier() {
   const [report, setReport] = useState<VerifyReport | null>(null);
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<ServerStatus | null>(null);
-  const [joinBoard, setJoinBoard] = useState(false);
-  const [name, setName] = useState("");
-  const [studentId, setStudentId] = useState("");
   const [uploads, setUploads] = useState<SavedUpload[]>([]);
   const [boardKey, setBoardKey] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -41,18 +37,8 @@ export function Verifier() {
       .then((r) => r.json() as Promise<ServerStatus>)
       .then((s) => {
         setStatus(s);
-        if (!s.storage) return;
-        // saved links and the leaderboard profile only matter when uploads are kept
-        setUploads(loadUploads());
-        try {
-          const p = JSON.parse(localStorage.getItem(PROFILE_KEY) ?? "null") as { name?: string; studentId?: string } | null;
-          if (p) {
-            setName(p.name ?? "");
-            setStudentId(p.studentId ?? "");
-          }
-        } catch {
-          // no saved profile
-        }
+        // saved download links only matter when uploads are kept
+        if (s.storage) setUploads(loadUploads());
       })
       .catch(() => setStatus({ storage: false, ai: { available: false } }));
   }, []);
@@ -73,16 +59,6 @@ export function Verifier() {
 
   const submit = async () => {
     if (!file) return;
-    const leaderboard = storage && joinBoard ? { name: name.trim(), studentId: studentId.replace(/\s+/g, "") } : undefined;
-    if (leaderboard) {
-      if (leaderboard.name.length < 2) return setError("Isi nama untuk papan peringkat.");
-      if (!/^\d{6,16}$/.test(leaderboard.studentId)) return setError("NPM harus berupa 6–16 digit angka.");
-      try {
-        localStorage.setItem(PROFILE_KEY, JSON.stringify(leaderboard));
-      } catch {
-        // not remembered; fine
-      }
-    }
     setError(null);
     setReport(null);
     try {
@@ -96,7 +72,7 @@ export function Verifier() {
         res = await fetch("/api/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ blobPathname: blob.pathname, fileName: file.name, docType, ai: useAi && aiUsable, leaderboard }),
+          body: JSON.stringify({ blobPathname: blob.pathname, fileName: file.name, docType, ai: useAi && aiUsable }),
         });
       } else {
         setBusy("check");
@@ -112,7 +88,7 @@ export function Verifier() {
       const sub = data.submission;
       if (sub?.id && sub.downloadUrl) {
         setUploads(rememberUpload({ id: sub.id, fileName: data.fileName, downloadUrl: sub.downloadUrl, score: sub.rankedScore, createdAt: new Date().toISOString() }));
-        if (sub.onLeaderboard) setBoardKey((k) => k + 1);
+        setBoardKey((k) => k + 1);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan.");
@@ -192,27 +168,7 @@ export function Verifier() {
           </button>
         </div>
 
-        {storage && (
-          <div className="mt-4 rounded-xl border border-border p-4">
-            <label className="flex items-center gap-2 text-sm select-none">
-              <input type="checkbox" checked={joinBoard} onChange={(e) => setJoinBoard(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
-              <span>Tampilkan di papan peringkat</span>
-            </label>
-            {joinBoard && (
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <label className="block text-sm">
-                  <span className="text-muted">Nama (ditampilkan)</span>
-                  <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} autoComplete="name" className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
-                </label>
-                <label className="block text-sm">
-                  <span className="text-muted">NPM (ditampilkan tersamar)</span>
-                  <input value={studentId} onChange={(e) => setStudentId(e.target.value)} inputMode="numeric" maxLength={16} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono" />
-                </label>
-              </div>
-            )}
-            <p className="mt-2 text-xs text-muted">Berkas disimpan secara privat agar dapat Anda unduh kembali; hanya pemegang tautan unduhan yang dapat mengaksesnya. Peringkat memakai skor berbasis aturan (tanpa AI).</p>
-          </div>
-        )}
+        {storage && <p className="mt-4 text-xs text-muted">Setiap naskah yang diperiksa masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul (NPM ditampilkan tersamar). Berkas disimpan secara privat; hanya pemegang tautan unduhan yang dapat mengunduhnya.</p>}
         {error && <p className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       </section>
 
@@ -230,8 +186,9 @@ export function Verifier() {
           ) : (
             <>
               <span>
-                Berkas tersimpan. Skor peringkat: <span className="font-semibold">{report.submission.rankedScore}</span>
-                {report.submission.onLeaderboard ? " · masuk papan peringkat" : ""}
+                Berkas tersimpan dan masuk papan peringkat sebagai <span className="font-semibold">{report.student?.name ?? "Tanpa nama"}</span>
+                {report.student?.studentId ? <span className="font-mono text-muted"> ({report.student.studentId})</span> : null}
+                {!report.student?.name || !report.student?.studentId ? <span className="text-amber-700 dark:text-amber-300"> · nama/NPM tidak terbaca dari sampul (baris setelah OLEH)</span> : null}
               </span>
               {report.submission.downloadUrl && (
                 <a href={report.submission.downloadUrl} className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent/60">

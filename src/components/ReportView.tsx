@@ -102,7 +102,7 @@ export function ReportView({ report }: { report: VerifyReport }) {
                 {score}
                 <span className="text-lg font-semibold text-muted">/100</span>
               </div>
-              <div className="text-xs text-muted">skor format</div>
+              <div className="text-xs text-muted">skor format{report.ai?.used ? " · tanpa temuan AI" : ""}</div>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
               {(["error", "warning", "info"] as Severity[]).map((s) => (
