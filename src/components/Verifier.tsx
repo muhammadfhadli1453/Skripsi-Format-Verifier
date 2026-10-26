@@ -5,7 +5,6 @@ import { uploadPresigned } from "@vercel/blob/client";
 import type { Issue, Severity, VerifyReport } from "@/lib/model";
 import { ReportView } from "./ReportView";
 import { Leaderboard } from "./Leaderboard";
-import { MyUploads, loadUploads, rememberUpload, type SavedUpload } from "./MyUploads";
 
 type DocTypeChoice = "auto" | "proposal" | "skripsi" | "kp" | "hasil";
 
@@ -28,18 +27,13 @@ export function Verifier() {
   const [report, setReport] = useState<VerifyReport | null>(null);
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<ServerStatus | null>(null);
-  const [uploads, setUploads] = useState<SavedUpload[]>([]);
   const [boardKey, setBoardKey] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch("/api/status")
       .then((r) => r.json() as Promise<ServerStatus>)
-      .then((s) => {
-        setStatus(s);
-        // saved download links only matter when uploads are kept
-        if (s.storage) setUploads(loadUploads());
-      })
+      .then(setStatus)
       .catch(() => setStatus({ storage: false, ai: { available: false } }));
   }, []);
 
@@ -85,11 +79,7 @@ export function Verifier() {
       const data = (await res.json()) as VerifyReport & { error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? `Gagal (${res.status})`);
       setReport(data);
-      const sub = data.submission;
-      if (sub?.id && sub.downloadUrl) {
-        setUploads(rememberUpload({ id: sub.id, fileName: data.fileName, downloadUrl: sub.downloadUrl, score: sub.rankedScore, createdAt: new Date().toISOString() }));
-        setBoardKey((k) => k + 1);
-      }
+      if (data.submission?.id) setBoardKey((k) => k + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan.");
     } finally {
@@ -168,16 +158,11 @@ export function Verifier() {
           </button>
         </div>
 
-        {storage && <p className="mt-4 text-xs text-muted">Setiap naskah yang diperiksa masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul. Berkas disimpan secara privat; hanya pemegang tautan unduhan yang dapat mengunduhnya.</p>}
+        {storage && <p className="mt-4 text-xs text-muted">Setiap naskah yang diperiksa masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul. Naskah yang masuk 5 besar dapat diunduh siapa pun sebagai contoh; naskah lain tidak dibagikan.</p>}
         {error && <p className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       </section>
 
-      {storage && (
-        <div className={`grid gap-8 ${uploads.length ? "lg:grid-cols-2" : ""}`}>
-          <Leaderboard refreshKey={boardKey} />
-          <MyUploads uploads={uploads} />
-        </div>
-      )}
+      {storage && <Leaderboard refreshKey={boardKey} />}
 
       {report?.submission && (
         <div className="no-print flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
@@ -190,11 +175,6 @@ export function Verifier() {
                 {report.student?.studentId ? <span className="font-mono text-muted"> ({report.student.studentId})</span> : null}
                 {!report.student?.name || !report.student?.studentId ? <span className="text-amber-700 dark:text-amber-300"> · nama/NPM tidak terbaca dari sampul (baris setelah OLEH)</span> : null}
               </span>
-              {report.submission.downloadUrl && (
-                <a href={report.submission.downloadUrl} className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent/60">
-                  Unduh berkas
-                </a>
-              )}
             </>
           )}
         </div>

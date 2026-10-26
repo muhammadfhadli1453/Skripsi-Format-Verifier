@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import type { DocType } from "@/lib/model";
 
 interface Entry {
+  id: string;
   rank: number;
   name?: string;
   studentId?: string;
   docType: DocType;
+  fileName: string;
   score: number;
   createdAt: string;
 }
@@ -53,7 +55,7 @@ export function Leaderboard({ refreshKey }: { refreshKey: number }) {
           ))}
         </div>
       </div>
-      <p className="mt-1 text-xs text-muted">5 skor format tertinggi (pemeriksaan berbasis aturan, tanpa AI). Nama dan NPM dibaca dari sampul; satu baris per NPM, diambil dari skor terbaiknya.</p>
+      <p className="mt-1 text-xs text-muted">5 skor format tertinggi (pemeriksaan berbasis aturan, tanpa AI). Nama dan NPM dibaca dari sampul; satu baris per NPM, diambil dari skor terbaiknya. Unduh naskahnya sebagai contoh.</p>
       {error && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{error}</p>}
       {entries === null ? (
         <p className="mt-4 text-sm text-muted">Memuat…</p>
@@ -62,7 +64,7 @@ export function Leaderboard({ refreshKey }: { refreshKey: number }) {
       ) : (
         <ol className="mt-4 divide-y divide-border">
           {entries.map((e) => (
-            <li key={e.rank} className="flex items-center gap-3 py-2.5">
+            <li key={e.id} className="flex items-center gap-3 py-2.5">
               <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${e.rank === 1 ? "bg-accent text-white" : "bg-accent/10 text-accent"}`}>{e.rank}</span>
               <div className="min-w-0 flex-1">
                 <p className={`truncate text-sm font-medium ${e.name ? "" : "italic text-muted"}`}>{e.name ?? "Tanpa nama"}</p>
@@ -71,6 +73,9 @@ export function Leaderboard({ refreshKey }: { refreshKey: number }) {
                 </p>
               </div>
               <span className="text-lg font-bold tabular-nums">{e.score}</span>
+              <a href={`/api/submissions/${e.id}/file`} title={e.fileName} className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent/60">
+                Unduh
+              </a>
             </li>
           ))}
         </ol>

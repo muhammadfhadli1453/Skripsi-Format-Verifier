@@ -11,7 +11,7 @@ perbaikan. Penyedia AI dapat dipilih: **OpenRouter** (model dari `OPENROUTER_MOD
 langsung (bawaan `claude-haiku-4-5`). Lihat `.env.example`.
 
 Bila penyimpanan dikonfigurasi (Vercel Blob privat + Neon Postgres), berkas yang diunggah disimpan agar
-mahasiswa dapat mengunduhnya kembali, dan tersedia **papan peringkat** 5 skor format tertinggi.
+tersedia **papan peringkat** 5 skor format tertinggi yang naskahnya dapat diunduh sebagai contoh.
 
 ## Menjalankan
 
@@ -47,13 +47,13 @@ src/lib/rules/*.ts          aturan: layout, cover, frontmatter, body, pagenumber
 src/lib/ai/provider.ts      pemilihan penyedia AI (AI_PROVIDER: openrouter | anthropic) + pemanggilan model
 src/lib/ai/checks.ts        pemeriksaan AI: istilah asing & ringkasan
 src/lib/storage/db.ts       Neon (lazy) + skema tabel submissions; deteksi konfigurasi Blob/DB
-src/lib/storage/submissions.ts  simpan unggahan, token unduhan (hash SHA-256), papan peringkat
+src/lib/storage/submissions.ts  simpan unggahan, papan peringkat, izin unduh 5 besar
 src/app/api/verify/route.ts POST JSON {blobPathname, docType, ai, leaderboard} (dengan penyimpanan)
                             atau multipart (file, docType, ai) tanpa penyimpanan → VerifyReport JSON
 src/app/api/upload/route.ts presigned PUT ke Blob privat (unggah langsung dari browser, maks. 40 MB)
 src/app/api/leaderboard     GET ?docType= → 5 teratas;  src/app/api/status → fitur yang aktif
-src/app/api/submissions/[id]/file  GET ?token= → unduh berkas milik pengunggah
-src/components/*            UI unggah, laporan, papan peringkat, unggahan saya
+src/app/api/submissions/[id]/file  GET → unduh berkas (hanya naskah yang sedang masuk 5 besar)
+src/components/*            UI unggah, laporan, papan peringkat
 ```
 
 ## Penyimpanan & papan peringkat
@@ -70,8 +70,9 @@ Aturan: skor = skor **berbasis aturan saja**. Temuan AI tetap ditampilkan dan di
 tidak mengubah skor, sehingga skor di laporan sama dengan skor di papan peringkat. Setiap naskah yang diperiksa
 otomatis masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul (baris setelah OLEH;
 `src/lib/student.ts`). Satu baris per NPM (skor terbaiknya); naskah tanpa NPM terbaca
-tampil sendiri sebagai "Tanpa nama". Seri dimenangkan unggahan lebih awal. Tautan unduhan memuat token rahasia yang
-hanya dikirim ke pengunggah dan disimpan di peramban (`localStorage`); basis data hanya menyimpan hash-nya.
+tampil sendiri sebagai "Tanpa nama". Seri dimenangkan unggahan lebih awal. Naskah yang sedang masuk 5 besar (keseluruhan
+atau per jenis naskah) dapat diunduh siapa pun sebagai contoh; naskah lain tetap privat di Blob. Tidak ada akun
+pengguna.
 
 ## Cakupan aturan (ringkas)
 

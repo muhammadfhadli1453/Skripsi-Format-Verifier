@@ -261,8 +261,6 @@ export interface VerifyReport {
   /** present when the upload was kept in storage */
   submission?: {
     id?: string;
-    /** includes the secret token; only the uploader receives it */
-    downloadUrl?: string;
     /** same as summary.score */
     rankedScore: number;
     error?: string;

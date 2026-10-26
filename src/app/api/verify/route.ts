@@ -52,7 +52,7 @@ async function readFromBlob(req: Request, claim: (pathname: string) => void): Pr
   const body = (await req.json()) as { blobPathname?: string; fileName?: string; docType?: string; ai?: boolean };
   const blobPathname = String(body.blobPathname ?? "");
   if (!blobPathname.startsWith(UPLOAD_PREFIX)) throw new BadRequest("Berkas tidak valid.");
-  // a pathname belongs to the first request that claims it, so nobody can obtain a download token for someone else's upload
+  // a pathname belongs to the first request that claims it, so one upload can't be entered twice
   if (await pathnameUsed(blobPathname)) throw new BadRequest("Berkas ini sudah diperiksa. Unggah ulang untuk memeriksa lagi.", 409);
   claim(blobPathname);
   const name = String(body.fileName || blobPathname.slice(UPLOAD_PREFIX.length)) || "dokumen";
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
       try {
         const sub = await saveSubmission(input.blobPathname, report);
         saved = true;
-        finalReport = { ...finalReport, submission: { id: sub.id, downloadUrl: sub.downloadUrl, rankedScore } };
+        finalReport = { ...finalReport, submission: { id: sub.id, rankedScore } };
       } catch (e) {
         finalReport = { ...finalReport, submission: { rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` } };
       }
@@ -111,7 +111,7 @@ export async function POST(req: Request) {
     const message = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses berkas.";
     return NextResponse.json({ error: message }, { status });
   } finally {
-    // don't keep files nobody can download; re-check in case a concurrent request claimed it first
+    // don't keep files with no submission row; re-check in case a concurrent request claimed it first
     if (blobPathname && !saved) {
       const owned = await pathnameUsed(blobPathname).catch(() => true);
       if (!owned) await del(blobPathname).catch(() => {});
