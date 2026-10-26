@@ -6,8 +6,8 @@ Aplikasi web (Next.js) untuk memeriksa **format** naskah Kerja Praktik / Proposa
 dengan lokasi (halaman/bagian/kutipan teks), nilai yang diharapkan vs ditemukan, dan cara memperbaikinya.
 
 Pemeriksaan utama **berbasis aturan** (deterministik, tanpa biaya). Pemeriksaan **AI** (aktif secara
-bawaan, dapat dimatikan) hanya untuk (1) istilah asing yang belum italic dan (2) ringkasan prioritas
-perbaikan. Penyedia AI dapat dipilih: **OpenRouter** (model dari `OPENROUTER_MODEL`) atau **Anthropic**
+bawaan, dapat dimatikan) hanya untuk (1) istilah asing yang belum italic, (2) salah ketik, dan (3) ringkasan
+prioritas perbaikan. Penyedia AI dapat dipilih: **OpenRouter** (model dari `OPENROUTER_MODEL`) atau **Anthropic**
 langsung (bawaan `claude-haiku-4-5`). Lihat `.env.example`.
 
 Bila penyimpanan dikonfigurasi (Vercel Blob privat + Neon Postgres), berkas yang diunggah disimpan agar
@@ -45,7 +45,7 @@ src/lib/parse/pdf.ts        PDF → model (mupdf wasm): font/ukuran/bold/italic 
 src/lib/sections.ts         klasifikasi bagian logis (Sampul, Pengesahan, Kata Pengantar, Daftar …, BAB, Pustaka)
 src/lib/rules/*.ts          aturan: layout, cover, frontmatter, body, pagenumbers, references
 src/lib/ai/provider.ts      pemilihan penyedia AI (AI_PROVIDER: openrouter | anthropic) + pemanggilan model
-src/lib/ai/checks.ts        pemeriksaan AI: istilah asing & ringkasan
+src/lib/ai/checks.ts        pemeriksaan AI: istilah asing, salah ketik & ringkasan
 src/lib/storage/db.ts       Neon (lazy) + skema tabel submissions; deteksi konfigurasi Blob/DB
 src/lib/storage/submissions.ts  simpan unggahan, papan peringkat, izin unduh 5 besar
 src/app/api/verify/route.ts POST JSON {blobPathname, docType, ai, leaderboard} (dengan penyimpanan)

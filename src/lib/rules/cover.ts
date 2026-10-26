@@ -3,6 +3,7 @@ import type { Para } from "../model";
 import { cmToPt, ptToCm } from "../model";
 import { CONJUNCTIONS, dominantSize, fmtSpacing, isMostlyBold, isUpperCase, locOf, titleCaseViolations, words } from "./util";
 import { FOREIGN_TERMS } from "./foreign";
+import { splitNameNpm } from "../student";
 
 const CAT = "Sampul (Cover)";
 const JENIS_RE = /^(SKRIPSI|PROPOSAL|PROPOSAL SKRIPSI|HASIL|LAPORAN HASIL|KERJA PRAKTIK|LAPORAN KERJA PRAKTIK|TUGAS AKHIR)$/;
@@ -45,6 +46,17 @@ export function coverRules(ctx: RuleContext) {
 
   // ---- 2. title block ----
   const olehIdx = lines.findIndex((l, i) => i > 0 && /^OLEH$/i.test(l.text));
+  // name and NPM in one paragraph, wrapped onto two lines only by wide indents:
+  // check them as two lines, but say the NPM should be its own paragraph
+  const joined = olehIdx > 0 && lines[olehIdx + 1] ? splitNameNpm(lines[olehIdx + 1].text) : undefined;
+  if (joined && !/^\d{8,16}$/.test((lines[olehIdx + 2]?.text ?? "").replace(/\s/g, ""))) {
+    const l = lines[olehIdx + 1];
+    lines.splice(olehIdx + 1, 1, { ...l, text: joined.name }, { ...l, text: joined.npm });
+    if (doc.source === "docx")
+      c.info("COVER-12", CAT, "Nama dan NPM berada dalam satu paragraf", `"${l.text}" ditulis dalam satu paragraf; NPM hanya turun ke baris berikutnya karena indentasi kiri/kanan. Bila font atau margin berubah, tata letaknya bisa bergeser.`, locOf(l.para, cover.label, l.text), {
+        fix: "Letakkan kursor sebelum NPM → Enter, lalu hapus indentasi kiri/kanan paragraf (Layout → Indent: 0) dan ratakan tengah (Ctrl+E).",
+      });
+  }
   if (olehIdx < 0) {
     c.error("COVER-05", CAT, 'Kata "OLEH" tidak ditemukan pada sampul', 'Sampul harus memuat kata "OLEH" (kapital, 14 pt) di atas nama mahasiswa.', locOf(jenis.para, cover.label));
   }

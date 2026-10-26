@@ -9,6 +9,15 @@ const NPM_RE = /^(?:NPM|NIM)?\s*[:.]?\s*(\d[\d\s]{6,18}\d)$/i;
 
 const toTitle = (s: string) => s.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (_m, a, b) => a + b.toUpperCase());
 
+/**
+ * "Haerani Ramli 07352211013" → name + NPM. Some covers put both in one
+ * paragraph and rely on wide indents to wrap the NPM onto its own line.
+ */
+export function splitNameNpm(text: string): { name: string; npm: string } | undefined {
+  const m = text.trim().match(/^(\D*\p{L}\D*?)\s+(\d{8,16})$/u);
+  return m ? { name: m[1].trim(), npm: m[2] } : undefined;
+}
+
 function cleanName(raw: string | undefined): string | undefined {
   const s = raw?.replace(/^(nama|oleh)\s*[:.]?\s*/i, "").replace(/\s+/g, " ").trim();
   if (!s || s.length < 2 || s.length > 60 || /\d/.test(s) || !/\p{L}/u.test(s)) return undefined;
@@ -36,11 +45,16 @@ export function extractStudent(doc: NormalizedDoc, sections: LogicalSection[]): 
     .flatMap((p) => p.textLines.map((l) => l.trim()).filter(Boolean));
   const oleh = lines.findIndex((l, i) => i > 0 && /^OLEH$/i.test(l));
   if (oleh > 0) {
+    const joined = splitNameNpm(lines[oleh + 1] ?? "");
+    if (joined) return { name: cleanName(joined.name), studentId: cleanNpm(joined.npm) };
     const name = cleanName(lines[oleh + 1]);
     const studentId = cleanNpm(lines[oleh + 2]) ?? cleanNpm(lines[oleh + 1]);
     if (name || studentId) return { name, studentId };
   }
   const npmAt = lines.findIndex((l) => cleanNpm(l));
-  if (npmAt < 0) return {};
+  if (npmAt < 0) {
+    const joined = lines.map(splitNameNpm).find(Boolean);
+    return joined ? { name: cleanName(joined.name), studentId: cleanNpm(joined.npm) } : {};
+  }
   return { name: npmAt > 0 ? cleanName(lines[npmAt - 1]) : undefined, studentId: cleanNpm(lines[npmAt]) };
 }

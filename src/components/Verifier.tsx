@@ -177,7 +177,7 @@ export function Verifier() {
           <label className={`flex items-center gap-2 text-sm select-none py-2 ${aiUsable ? "" : "opacity-60"}`}>
             <input type="checkbox" checked={useAi && aiUsable} disabled={!aiUsable} onChange={(e) => setUseAi(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
             <span>
-              Pemeriksaan AI <span className="text-muted">({aiUsable ? `${status?.ai.label ?? "…"}: istilah asing & ringkasan` : "kunci API belum diatur"})</span>
+              Pemeriksaan AI <span className="text-muted">({aiUsable ? `${status?.ai.label ?? "…"}: istilah asing, salah ketik & ringkasan` : "kunci API belum diatur"})</span>
             </span>
           </label>
           <button type="button" onClick={submit} disabled={!file || busy} className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition disabled:opacity-50 hover:brightness-110">

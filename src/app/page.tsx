@@ -12,7 +12,7 @@ export default function Home() {
       </header>
       <Verifier />
       <footer className="mt-12 text-xs text-muted print:hidden">
-        Pemeriksaan berbasis aturan (rule-based). Pemeriksaan AI hanya dipakai untuk istilah asing dan ringkasan, dan tidak memengaruhi skor papan peringkat. Hasil otomatis tidak menggantikan asistensi pembimbing.
+        Pemeriksaan berbasis aturan (rule-based). Pemeriksaan AI hanya dipakai untuk istilah asing, salah ketik, dan ringkasan, dan tidak memengaruhi skor papan peringkat. Hasil otomatis tidak menggantikan asistensi pembimbing.
       </footer>
     </main>
   );
