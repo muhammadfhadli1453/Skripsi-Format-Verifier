@@ -64,12 +64,17 @@ async function readFromBlob(req: Request, claim: (pathname: string) => void): Pr
   return { buffer, name, docType: pickDocType(body.docType), wantAi: body.ai === true, blobPathname };
 }
 
-export async function POST(req: Request) {
+/** Overall percentage (the browser upload is 0–30) and a label for the progress bar. */
+type Progress = (pct: number, label: string) => void;
+
+async function run(req: Request, progress: Progress): Promise<VerifyReport> {
   let blobPathname: string | undefined;
   let saved = false;
   try {
+    progress(32, "Membaca berkas…");
     const isJson = (req.headers.get("content-type") ?? "").includes("application/json");
     const input = isJson ? await readFromBlob(req, (p) => (blobPathname = p)) : await readMultipart(req);
+    progress(38, "Memeriksa format…");
     const { report, doc } = await analyze(input.buffer, input.name, { docType: input.docType });
 
     let finalReport: VerifyReport = report;
@@ -77,8 +82,9 @@ export async function POST(req: Request) {
       if (!aiAvailable()) {
         finalReport = { ...report, ai: { used: false, error: missingKeyMessage() } };
       } else {
+        progress(50, "Pemeriksaan AI…");
         const sections = detectSections(doc);
-        const ai = await runAiChecks(doc, sections, report.issues, report);
+        const ai = await runAiChecks(doc, sections, report.issues, report, (f, label) => progress(Math.round(50 + f * 45), label));
         const issues = [...report.issues, ...ai.issues];
         const errors = issues.filter((i) => i.severity === "error").length;
         const warnings = issues.filter((i) => i.severity === "warning").length;
@@ -96,6 +102,7 @@ export async function POST(req: Request) {
     }
 
     if (input.blobPathname) {
+      progress(97, "Menyimpan ke papan peringkat…");
       const rankedScore = report.summary.score;
       try {
         const sub = await saveSubmission(input.blobPathname, report);
@@ -105,11 +112,7 @@ export async function POST(req: Request) {
         finalReport = { ...finalReport, submission: { rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` } };
       }
     }
-    return NextResponse.json(finalReport);
-  } catch (err) {
-    const status = err instanceof BadRequest ? err.status : 500;
-    const message = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses berkas.";
-    return NextResponse.json({ error: message }, { status });
+    return finalReport;
   } finally {
     // don't keep files with no submission row; re-check in case a concurrent request claimed it first
     if (blobPathname && !saved) {
@@ -117,4 +120,38 @@ export async function POST(req: Request) {
       if (!owned) await del(blobPathname).catch(() => {});
     }
   }
+}
+
+const errorOf = (err: unknown) => ({
+  status: err instanceof BadRequest ? err.status : 500,
+  message: err instanceof Error ? err.message : "Terjadi kesalahan saat memproses berkas.",
+});
+
+/**
+ * Plain JSON by default. With ?stream=1 the response is NDJSON: {type:"progress",pct,label} lines,
+ * then one {type:"result",report} or {type:"error",message,status}.
+ */
+export async function POST(req: Request) {
+  if (new URL(req.url).searchParams.get("stream") !== "1") {
+    try {
+      return NextResponse.json(await run(req, () => {}));
+    } catch (err) {
+      const { status, message } = errorOf(err);
+      return NextResponse.json({ error: message }, { status });
+    }
+  }
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (o: object) => controller.enqueue(enc.encode(JSON.stringify(o) + "\n"));
+      try {
+        send({ type: "result", report: await run(req, (pct, label) => send({ type: "progress", pct, label })) });
+      } catch (err) {
+        send({ type: "error", ...errorOf(err) });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" } });
 }

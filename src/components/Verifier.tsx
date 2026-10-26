@@ -15,6 +15,31 @@ interface ServerStatus {
 
 const MIME = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
 
+type StreamEvent = { type: "progress"; pct: number; label: string } | { type: "result"; report: VerifyReport } | { type: "error"; message: string };
+
+/** Reads the NDJSON stream from /api/verify?stream=1, reporting progress until the result arrives. */
+async function readVerifyStream(res: Response, onProgress: (pct: number, label: string) => void): Promise<VerifyReport> {
+  if (!res.body) throw new Error(`Gagal (${res.status})`);
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const ev = JSON.parse(line) as StreamEvent;
+      if (ev.type === "progress") onProgress(ev.pct, ev.label);
+      else if (ev.type === "result") return ev.report;
+      else throw new Error(ev.message);
+    }
+  }
+  throw new Error("Koneksi terputus sebelum pemeriksaan selesai. Coba lagi.");
+}
+
 /** Blob pathnames: keep the name readable but drop characters that need escaping. */
 const blobName = (name: string) => name.replace(/[^\w.-]+/g, "_").replace(/_+/g, "_").replace(/\.(docx|pdf)$/i, (m) => m.toLowerCase());
 
@@ -22,7 +47,8 @@ export function Verifier() {
   const [file, setFile] = useState<File | null>(null);
   const [docType, setDocType] = useState<DocTypeChoice>("auto");
   const [useAi, setUseAi] = useState(true);
-  const [busy, setBusy] = useState<false | "upload" | "check">(false);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState({ pct: 0, label: "" });
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<VerifyReport | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -55,29 +81,36 @@ export function Verifier() {
     if (!file) return;
     setError(null);
     setReport(null);
+    setBusy(true);
+    // the bar only moves forward, even if events arrive out of order
+    const advance = (pct: number, label: string) => setProgress((p) => ({ pct: Math.max(p.pct, Math.min(100, pct)), label }));
+    setProgress({ pct: 0, label: "Mengunggah berkas…" });
     try {
       let res: Response;
       if (storage) {
-        // straight to private Blob, so files over the 4.5 MB function body limit still work
-        setBusy("upload");
+        // straight to private Blob, so files over the 4.5 MB function body limit still work; the upload is 0–30%
         const ext = /\.pdf$/i.test(file.name) ? "pdf" : "docx";
-        const blob = await uploadPresigned(`uploads/${blobName(file.name)}`, file, { access: "private", handleUploadUrl: "/api/upload", contentType: MIME[ext] });
-        setBusy("check");
-        res = await fetch("/api/verify", {
+        const blob = await uploadPresigned(`uploads/${blobName(file.name)}`, file, {
+          access: "private",
+          handleUploadUrl: "/api/upload",
+          contentType: MIME[ext],
+          onUploadProgress: ({ percentage }) => advance(Math.round(percentage * 0.3), `Mengunggah berkas… ${Math.round(percentage)}%`),
+        });
+        res = await fetch("/api/verify?stream=1", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ blobPathname: blob.pathname, fileName: file.name, docType, ai: useAi && aiUsable }),
         });
       } else {
-        setBusy("check");
+        advance(10, "Mengunggah berkas…");
         const fd = new FormData();
         fd.append("file", file);
         fd.append("docType", docType);
         fd.append("ai", useAi && aiUsable ? "1" : "0");
-        res = await fetch("/api/verify", { method: "POST", body: fd });
+        res = await fetch("/api/verify?stream=1", { method: "POST", body: fd });
       }
-      const data = (await res.json()) as VerifyReport & { error?: string };
-      if (!res.ok || data.error) throw new Error(data.error ?? `Gagal (${res.status})`);
+      const data = await readVerifyStream(res, advance);
+      advance(100, "Selesai");
       setReport(data);
       if (data.submission?.id) setBoardKey((k) => k + 1);
     } catch (e) {
@@ -147,10 +180,10 @@ export function Verifier() {
               Pemeriksaan AI <span className="text-muted">({aiUsable ? `${status?.ai.label ?? "…"}: istilah asing & ringkasan` : "kunci API belum diatur"})</span>
             </span>
           </label>
-          <button type="button" onClick={submit} disabled={!file || !!busy} className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition disabled:opacity-50 hover:brightness-110">
+          <button type="button" onClick={submit} disabled={!file || busy} className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition disabled:opacity-50 hover:brightness-110">
             {busy ? (
               <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> {busy === "upload" ? "Mengunggah…" : "Memeriksa…"}
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> Memeriksa… <span className="tabular-nums">{progress.pct}%</span>
               </>
             ) : (
               "Periksa Format"
@@ -158,6 +191,17 @@ export function Verifier() {
           </button>
         </div>
 
+        {busy && (
+          <div className="mt-4" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.pct} aria-valuetext={`${progress.pct}% · ${progress.label}`}>
+            <div className="mb-1.5 flex items-baseline justify-between gap-3 text-xs">
+              <span className="text-muted">{progress.label}</span>
+              <span className="font-semibold tabular-nums">{progress.pct}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-accent/10">
+              <div className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out" style={{ width: `${progress.pct}%` }} />
+            </div>
+          </div>
+        )}
         {storage && <p className="mt-4 text-xs text-muted">Setiap naskah yang diperiksa masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul. Naskah yang masuk 5 besar dapat diunduh siapa pun sebagai contoh; naskah lain tidak dibagikan.</p>}
         {error && <p className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       </section>

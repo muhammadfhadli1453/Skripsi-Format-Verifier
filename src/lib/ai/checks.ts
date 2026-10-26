@@ -67,7 +67,10 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[], ruleIssues: Issue[], report: VerifyReport): Promise<AiResult> {
+/** 0–1 through the whole AI step, with a label for the UI */
+export type AiProgress = (fraction: number, label: string) => void;
+
+export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[], ruleIssues: Issue[], report: VerifyReport, onProgress: AiProgress = () => {}): Promise<AiResult> {
   const result: AiResult = { issues: [], inputTokens: 0, outputTokens: 0 };
   const cfg: AiConfig | undefined = aiConfig();
   if (!cfg) {
@@ -99,6 +102,11 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
   const MAX_CHUNKS = 24; // cost guard (~150k chars)
   const used = chunks.slice(0, MAX_CHUNKS);
   const hits: ForeignHit[] = [];
+  // the foreign-term chunks are most of the AI time; the summary is one short call
+  const CHUNK_SHARE = 0.85;
+  let done = 0;
+  const chunkLabel = () => `AI memeriksa istilah asing (${done}/${used.length} bagian)…`;
+  onProgress(0, chunkLabel());
   const runChunk = async (chunk: typeof bodyParas) => {
     const payload = chunk.map((p) => `[${p.index}] ${renderParagraph(p)}`).join("\n\n");
     const res = await complete({ system: FOREIGN_SYSTEM, user: payload, maxTokens: 2048, temperature: 0 });
@@ -106,6 +114,8 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
     result.outputTokens += res.outputTokens;
     const parsed = extractJson<{ hits: ForeignHit[] }>(res.text);
     for (const h of parsed?.hits ?? []) if (typeof h.paraIndex === "number" && typeof h.term === "string" && h.term.trim()) hits.push(h);
+    done++;
+    onProgress((done / used.length) * CHUNK_SHARE, chunkLabel());
   };
   try {
     const CONCURRENCY = 4;
@@ -138,7 +148,7 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
       severity: "warning",
       category: "Istilah Asing (AI)",
       title: `Istilah asing "${term}" tidak dimiringkan`,
-      detail: `Ditemukan oleh AI (${cfg.model}): "${term}" ditulis tanpa italic pada "${(h.context || p.text).slice(0, 80)}". Istilah asing harus italic (Ctrl+I). Verifikasi manual tetap dianjurkan.`,
+      detail: `Ditemukan oleh AI: "${term}" ditulis tanpa italic pada "${(h.context || p.text).slice(0, 80)}". Istilah asing harus italic (Ctrl+I). Verifikasi manual tetap dianjurkan.`,
       fix: "Blok istilah → Ctrl+I.",
       location: loc,
       occurrences: [],
@@ -150,6 +160,7 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
   if (chunks.length > MAX_CHUNKS) result.issues.push({ id: "AI-INFO", severity: "info", category: "Istilah Asing (AI)", title: "Pemeriksaan AI dibatasi", detail: `Hanya ${MAX_CHUNKS} dari ${chunks.length} bagian teks yang diperiksa AI untuk membatasi biaya.`, location: {}, source: "ai" });
 
   // ---- 2. summary ----
+  onProgress(CHUNK_SHARE, "AI menyusun ringkasan…");
   try {
     const all = [...ruleIssues, ...result.issues];
     const list = all
