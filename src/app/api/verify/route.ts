@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
+import { del, get } from "@vercel/blob";
 import type { DocType, VerifyReport } from "@/lib/model";
 import { analyze } from "@/lib/verify";
 import { detectSections } from "@/lib/sections";
-import { AI_MODEL, aiAvailable, runAiChecks } from "@/lib/ai/haiku";
+import { aiAvailable, aiConfig, missingKeyMessage } from "@/lib/ai/provider";
+import { runAiChecks } from "@/lib/ai/checks";
+import { storageEnabled } from "@/lib/storage/db";
+import { UPLOAD_PREFIX, parseOptIn, pathnameUsed, saveSubmission, type LeaderboardOptIn } from "@/lib/storage/submissions";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -11,25 +15,70 @@ export const dynamic = "force-dynamic";
 const MAX_BYTES = 40 * 1024 * 1024;
 const DOC_TYPES: (DocType | "auto")[] = ["auto", "proposal", "skripsi", "kp", "hasil"];
 
-export async function POST(req: Request) {
-  try {
-    const form = await req.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) return NextResponse.json({ error: "Berkas tidak ditemukan. Unggah .docx atau .pdf." }, { status: 400 });
-    if (file.size > MAX_BYTES) return NextResponse.json({ error: "Berkas terlalu besar (maks. 40 MB)." }, { status: 413 });
-    const name = file.name || "dokumen";
-    if (!/\.(docx|pdf)$/i.test(name)) return NextResponse.json({ error: "Format tidak didukung. Gunakan .docx atau .pdf." }, { status: 400 });
-    const docTypeRaw = String(form.get("docType") ?? "auto");
-    const docType = (DOC_TYPES.includes(docTypeRaw as DocType | "auto") ? docTypeRaw : "auto") as DocType | "auto";
-    const wantAi = String(form.get("ai") ?? "0") === "1";
+class BadRequest extends Error {
+  constructor(message: string, readonly status = 400) {
+    super(message);
+  }
+}
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const { report, doc } = await analyze(buffer, name, { docType });
+interface Input {
+  buffer: Buffer;
+  name: string;
+  docType: DocType | "auto";
+  wantAi: boolean;
+  /** set when the file came through Blob and should be kept */
+  blobPathname?: string;
+  optIn?: LeaderboardOptIn;
+}
+
+const pickDocType = (raw: unknown) => (DOC_TYPES.includes(String(raw ?? "auto") as DocType | "auto") ? String(raw ?? "auto") : "auto") as DocType | "auto";
+const checkName = (name: string) => {
+  if (!/\.(docx|pdf)$/i.test(name)) throw new BadRequest("Format tidak didukung. Gunakan .docx atau .pdf.");
+};
+
+/** Without storage: the file comes in the request body (local dev; capped at 4.5 MB on Vercel). */
+async function readMultipart(req: Request): Promise<Input> {
+  const form = await req.formData();
+  const file = form.get("file");
+  if (!(file instanceof File)) throw new BadRequest("Berkas tidak ditemukan. Unggah .docx atau .pdf.");
+  if (file.size > MAX_BYTES) throw new BadRequest("Berkas terlalu besar (maks. 40 MB).", 413);
+  const name = file.name || "dokumen";
+  checkName(name);
+  return { buffer: Buffer.from(await file.arrayBuffer()), name, docType: pickDocType(form.get("docType")), wantAi: String(form.get("ai") ?? "0") === "1" };
+}
+
+/** With storage: the browser already uploaded to private Blob and sends the pathname. */
+async function readFromBlob(req: Request, claim: (pathname: string) => void): Promise<Input> {
+  if (!storageEnabled()) throw new BadRequest("Penyimpanan berkas belum dikonfigurasi.", 503);
+  const body = (await req.json()) as { blobPathname?: string; fileName?: string; docType?: string; ai?: boolean; leaderboard?: unknown };
+  const blobPathname = String(body.blobPathname ?? "");
+  if (!blobPathname.startsWith(UPLOAD_PREFIX)) throw new BadRequest("Berkas tidak valid.");
+  // a pathname belongs to the first request that claims it, so nobody can obtain a download token for someone else's upload
+  if (await pathnameUsed(blobPathname)) throw new BadRequest("Berkas ini sudah diperiksa. Unggah ulang untuk memeriksa lagi.", 409);
+  claim(blobPathname);
+  const optIn = parseOptIn(body.leaderboard);
+  if (typeof optIn === "string") throw new BadRequest(optIn);
+  const name = String(body.fileName || blobPathname.slice(UPLOAD_PREFIX.length)) || "dokumen";
+  checkName(name);
+  const blob = await get(blobPathname, { access: "private", useCache: false });
+  if (!blob || blob.statusCode !== 200) throw new BadRequest("Berkas tidak ditemukan di penyimpanan.", 404);
+  if (blob.blob.size > MAX_BYTES) throw new BadRequest("Berkas terlalu besar (maks. 40 MB).", 413);
+  const buffer = Buffer.from(await new Response(blob.stream).arrayBuffer());
+  return { buffer, name, docType: pickDocType(body.docType), wantAi: body.ai === true, blobPathname, optIn };
+}
+
+export async function POST(req: Request) {
+  let blobPathname: string | undefined;
+  let saved = false;
+  try {
+    const isJson = (req.headers.get("content-type") ?? "").includes("application/json");
+    const input = isJson ? await readFromBlob(req, (p) => (blobPathname = p)) : await readMultipart(req);
+    const { report, doc } = await analyze(input.buffer, input.name, { docType: input.docType });
 
     let finalReport: VerifyReport = report;
-    if (wantAi) {
+    if (input.wantAi) {
       if (!aiAvailable()) {
-        finalReport = { ...report, ai: { used: false, error: "CLAUDE_API_KEY belum diatur di .env" } };
+        finalReport = { ...report, ai: { used: false, error: missingKeyMessage() } };
       } else {
         const sections = detectSections(doc);
         const ai = await runAiChecks(doc, sections, report.issues, report);
@@ -42,13 +91,32 @@ export async function POST(req: Request) {
           issues,
           summary: { errors, warnings, infos, score: Math.max(0, Math.round(100 - errors * 4 - warnings * 1.5 - infos * 0.5)) },
           aiSummary: ai.summary,
-          ai: { used: true, model: AI_MODEL, error: ai.error, inputTokens: ai.inputTokens, outputTokens: ai.outputTokens },
+          ai: { used: true, model: ai.model ?? aiConfig()?.label, error: ai.error, inputTokens: ai.inputTokens, outputTokens: ai.outputTokens },
         };
+      }
+    }
+
+    if (input.blobPathname) {
+      // the leaderboard ranks the rule-based score, so turning AI off never helps a student rank higher
+      const rankedScore = report.summary.score;
+      try {
+        const sub = await saveSubmission(input.blobPathname, report, input.optIn);
+        saved = true;
+        finalReport = { ...finalReport, submission: { id: sub.id, downloadUrl: sub.downloadUrl, onLeaderboard: !!input.optIn, rankedScore } };
+      } catch (e) {
+        finalReport = { ...finalReport, submission: { onLeaderboard: false, rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` } };
       }
     }
     return NextResponse.json(finalReport);
   } catch (err) {
+    const status = err instanceof BadRequest ? err.status : 500;
     const message = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses berkas.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status });
+  } finally {
+    // don't keep files nobody can download; re-check in case a concurrent request claimed it first
+    if (blobPathname && !saved) {
+      const owned = await pathnameUsed(blobPathname).catch(() => true);
+      if (!owned) await del(blobPathname).catch(() => {});
+    }
   }
 }

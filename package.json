@@ -15,10 +15,13 @@
     "verify": "tsx scripts/verify-cli.mts",
     "dump": "tsx scripts/dump.mts",
     "fixture": "tsx scripts/make-fixture.mts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "db:init": "tsx scripts/db-init.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
+    "@neondatabase/serverless": "^1.2.0",
+    "@vercel/blob": "^2.8.2",
     "fast-xml-parser": "^5.11.2",
     "jszip": "^3.10.2",
     "mupdf": "^1.28.1",

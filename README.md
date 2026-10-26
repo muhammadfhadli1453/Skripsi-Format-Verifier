@@ -5,9 +5,13 @@ Aplikasi web (Next.js) untuk memeriksa **format** naskah Kerja Praktik / Proposa
 (`reference/FORMAT PENULISAN UPDATE 012424_202301.pdf`). Hasilnya adalah daftar masalah
 dengan lokasi (halaman/bagian/kutipan teks), nilai yang diharapkan vs ditemukan, dan cara memperbaikinya.
 
-Pemeriksaan utama **berbasis aturan** (deterministik, tanpa biaya). Pemeriksaan **AI opsional**
-memakai **Claude Haiku 4.5** (`claude-haiku-4-5`) hanya untuk (1) istilah asing yang belum
-italic dan (2) ringkasan prioritas perbaikan. Model lain tidak digunakan.
+Pemeriksaan utama **berbasis aturan** (deterministik, tanpa biaya). Pemeriksaan **AI** (aktif secara
+bawaan, dapat dimatikan) hanya untuk (1) istilah asing yang belum italic dan (2) ringkasan prioritas
+perbaikan. Penyedia AI dapat dipilih: **OpenRouter** (model dari `OPENROUTER_MODEL`) atau **Anthropic**
+langsung (bawaan `claude-haiku-4-5`). Lihat `.env.example`.
+
+Bila penyimpanan dikonfigurasi (Vercel Blob privat + Neon Postgres), berkas yang diunggah disimpan agar
+mahasiswa dapat mengunduhnya kembali, dan tersedia **papan peringkat** 5 skor format tertinggi.
 
 ## Menjalankan
 
@@ -15,7 +19,7 @@ Memerlukan Node.js ≥ 20.9.
 
 ```bash
 npm install
-cp .env.example .env        # isi CLAUDE_API_KEY bila ingin memakai pemeriksaan AI
+cp .env.example .env        # isi OPENROUTER_API_KEY atau CLAUDE_API_KEY untuk pemeriksaan AI
 npm run dev                 # http://localhost:3000
 npm run build && npm start  # produksi
 ```
@@ -40,10 +44,32 @@ src/lib/parse/pdf.ts        PDF → model (mupdf wasm): font/ukuran/bold/italic 
                             rekonstruksi baris→paragraf, deteksi tabel, nomor halaman, margin, logo
 src/lib/sections.ts         klasifikasi bagian logis (Sampul, Pengesahan, Kata Pengantar, Daftar …, BAB, Pustaka)
 src/lib/rules/*.ts          aturan: layout, cover, frontmatter, body, pagenumbers, references
-src/lib/ai/haiku.ts         pemeriksaan AI opsional (Claude Haiku 4.5)
-src/app/api/verify/route.ts POST multipart (file, docType, ai) → VerifyReport JSON
-src/components/*            UI unggah + laporan
+src/lib/ai/provider.ts      pemilihan penyedia AI (AI_PROVIDER: openrouter | anthropic) + pemanggilan model
+src/lib/ai/checks.ts        pemeriksaan AI: istilah asing & ringkasan
+src/lib/storage/db.ts       Neon (lazy) + skema tabel submissions; deteksi konfigurasi Blob/DB
+src/lib/storage/submissions.ts  simpan unggahan, token unduhan (hash SHA-256), papan peringkat
+src/app/api/verify/route.ts POST JSON {blobPathname, docType, ai, leaderboard} (dengan penyimpanan)
+                            atau multipart (file, docType, ai) tanpa penyimpanan → VerifyReport JSON
+src/app/api/upload/route.ts presigned PUT ke Blob privat (unggah langsung dari browser, maks. 40 MB)
+src/app/api/leaderboard     GET ?docType= → 5 teratas;  src/app/api/status → fitur yang aktif
+src/app/api/submissions/[id]/file  GET ?token= → unduh berkas milik pengunggah
+src/components/*            UI unggah, laporan, papan peringkat, unggahan saya
 ```
+
+## Penyimpanan & papan peringkat
+
+1. Di Vercel, hubungkan **Blob store privat** (`vercel blob create-store <nama> --access private`) dan
+   **Neon** (Marketplace: `vercel integration add neon`) ke proyek. Variabel `BLOB_STORE_ID` dan
+   `DATABASE_URL` terisi otomatis.
+2. Lokal: `vercel env pull .env.local`. Tabel dibuat otomatis saat pertama dipakai, atau `npm run db:init`.
+
+Tanpa kedua variabel itu aplikasi tetap berjalan seperti semula (berkas tidak disimpan, papan peringkat
+disembunyikan). Catatan: tanpa Blob, berkas dikirim di badan request, yang di Vercel dibatasi 4,5 MB.
+
+Aturan: skor peringkat = skor **berbasis aturan saja** (temuan AI tidak dihitung, jadi mematikan AI tidak
+menguntungkan); ikut peringkat bersifat opsional (nama + NPM, NPM ditampilkan tersamar); satu baris per NPM
+(skor terbaiknya); seri dimenangkan unggahan lebih awal. Tautan unduhan memuat token rahasia yang hanya
+dikirim ke pengunggah dan disimpan di peramban (`localStorage`); basis data hanya menyimpan hash-nya.
 
 ## Cakupan aturan (ringkas)
 

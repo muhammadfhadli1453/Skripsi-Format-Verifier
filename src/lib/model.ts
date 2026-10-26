@@ -256,5 +256,15 @@ export interface VerifyReport {
   limitations: string[];
   aiSummary?: string;
   ai?: { used: boolean; model?: string; error?: string; inputTokens?: number; outputTokens?: number };
+  /** present when the upload was kept in storage */
+  submission?: {
+    id?: string;
+    /** includes the secret token; only the uploader receives it */
+    downloadUrl?: string;
+    onLeaderboard: boolean;
+    /** rule-based score used for ranking (AI findings excluded) */
+    rankedScore: number;
+    error?: string;
+  };
   durationMs: number;
 }

@@ -1,20 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { Issue, LogicalSection, NormalizedDoc, VerifyReport } from "../model";
-
-/** The only model this app is allowed to use (per project requirement). */
-export const AI_MODEL = "claude-haiku-4-5";
-
-export function aiAvailable(): boolean {
-  return !!(process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY);
-}
-
-function client(): Anthropic {
-  const apiKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("CLAUDE_API_KEY tidak ditemukan di .env");
-  return new Anthropic({ apiKey, maxRetries: 2, timeout: 90_000 });
-}
+import { aiConfig, createCompleter, missingKeyMessage, type AiConfig, type Complete } from "./provider";
 
 export interface AiResult {
+  /** provider/model that produced the result */
+  model?: string;
   issues: Issue[];
   summary?: string;
   inputTokens: number;
@@ -80,13 +69,13 @@ function stripMarkdown(text: string): string {
 
 export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[], ruleIssues: Issue[], report: VerifyReport): Promise<AiResult> {
   const result: AiResult = { issues: [], inputTokens: 0, outputTokens: 0 };
-  let anthropic: Anthropic;
-  try {
-    anthropic = client();
-  } catch (e) {
-    result.error = (e as Error).message;
+  const cfg: AiConfig | undefined = aiConfig();
+  if (!cfg) {
+    result.error = missingKeyMessage();
     return result;
   }
+  result.model = cfg.label;
+  const complete: Complete = createCompleter(cfg);
 
   // ---- 1. foreign terms (chunked) ----
   const alreadyFlagged = new Set(ruleIssues.filter((i) => i.id === "LANG-01").flatMap((i) => [i.location.paraIndex, ...(i.occurrences ?? []).map((o) => o.paraIndex)]));
@@ -112,17 +101,10 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
   const hits: ForeignHit[] = [];
   const runChunk = async (chunk: typeof bodyParas) => {
     const payload = chunk.map((p) => `[${p.index}] ${renderParagraph(p)}`).join("\n\n");
-    const res = await anthropic.messages.create({
-      model: AI_MODEL,
-      max_tokens: 2048,
-      temperature: 0,
-      system: FOREIGN_SYSTEM,
-      messages: [{ role: "user", content: payload }],
-    });
-    result.inputTokens += res.usage.input_tokens;
-    result.outputTokens += res.usage.output_tokens;
-    const text = res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("\n");
-    const parsed = extractJson<{ hits: ForeignHit[] }>(text);
+    const res = await complete({ system: FOREIGN_SYSTEM, user: payload, maxTokens: 2048, temperature: 0 });
+    result.inputTokens += res.inputTokens;
+    result.outputTokens += res.outputTokens;
+    const parsed = extractJson<{ hits: ForeignHit[] }>(res.text);
     for (const h of parsed?.hits ?? []) if (typeof h.paraIndex === "number" && typeof h.term === "string" && h.term.trim()) hits.push(h);
   };
   try {
@@ -156,7 +138,7 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
       severity: "warning",
       category: "Istilah Asing (AI)",
       title: `Istilah asing "${term}" tidak dimiringkan`,
-      detail: `Ditemukan oleh Claude Haiku 4.5: "${term}" ditulis tanpa italic pada "${(h.context || p.text).slice(0, 80)}". Istilah asing harus italic (Ctrl+I). Verifikasi manual tetap dianjurkan.`,
+      detail: `Ditemukan oleh AI (${cfg.model}): "${term}" ditulis tanpa italic pada "${(h.context || p.text).slice(0, 80)}". Istilah asing harus italic (Ctrl+I). Verifikasi manual tetap dianjurkan.`,
       fix: "Blok istilah → Ctrl+I.",
       location: loc,
       occurrences: [],
@@ -175,21 +157,15 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
       .slice(0, 60)
       .map((i) => `- [${i.severity}] ${i.id} ${i.title}${i.occurrences?.length ? ` (${i.occurrences.length + 1} kejadian)` : ""}${i.location.page ? ` hal. ${i.location.page}` : ""}`)
       .join("\n");
-    const res = await anthropic.messages.create({
-      model: AI_MODEL,
-      max_tokens: 700,
+    const res = await complete({
+      maxTokens: 700,
       temperature: 0.2,
       system: "Anda asisten asistensi penulisan skripsi Prodi Informatika Universitas Khairun. Jawab dalam bahasa Indonesia yang ringkas, ramah, dan konkret, dalam teks biasa (plain text): JANGAN gunakan markdown sama sekali (tanpa #, tanpa **, tanpa tabel). Satu paragraf pembuka, lalu maksimal 6 poin prioritas bernomor (1., 2., …), lalu satu kalimat penutup.",
-      messages: [
-        {
-          role: "user",
-          content: `Naskah: ${report.docType.toUpperCase()}, ${report.pageCount ?? "?"} halaman, ${report.summary.errors} kesalahan, ${report.summary.warnings} peringatan.\nTemuan pemeriksaan format:\n${list || "(tidak ada temuan)"}\n\nBuat ringkasan singkat untuk mahasiswa: kondisi umum naskah dan urutan prioritas perbaikan (mulai dari yang paling sering ditolak saat asistensi: sampul, nomor halaman, spasi, font).`,
-        },
-      ],
+      user: `Naskah: ${report.docType.toUpperCase()}, ${report.pageCount ?? "?"} halaman, ${report.summary.errors} kesalahan, ${report.summary.warnings} peringatan.\nTemuan pemeriksaan format:\n${list || "(tidak ada temuan)"}\n\nBuat ringkasan singkat untuk mahasiswa: kondisi umum naskah dan urutan prioritas perbaikan (mulai dari yang paling sering ditolak saat asistensi: sampul, nomor halaman, spasi, font).`,
     });
-    result.inputTokens += res.usage.input_tokens;
-    result.outputTokens += res.usage.output_tokens;
-    result.summary = stripMarkdown(res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("\n"));
+    result.inputTokens += res.inputTokens;
+    result.outputTokens += res.outputTokens;
+    result.summary = stripMarkdown(res.text);
   } catch (e) {
     result.error = (result.error ? result.error + " | " : "") + `Ringkasan AI gagal: ${(e as Error).message}`;
   }
