@@ -97,12 +97,22 @@ function openrouterCompleter(model: string): Complete {
       reasoning: { effort: "low", exclude: true },
     });
     for (let attempt = 0; ; attempt++) {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${openrouterKey()}`, "Content-Type": "application/json", "X-Title": "Pemeriksa Format Skripsi" },
-        body,
-        signal: AbortSignal.timeout(90_000),
-      });
+      let res: Response;
+      try {
+        res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${openrouterKey()}`, "Content-Type": "application/json", "X-Title": "Pemeriksa Format Skripsi" },
+          body,
+          signal: AbortSignal.timeout(90_000),
+        });
+      } catch (e) {
+        // network failures ("fetch failed", resets) are as transient as a 5xx
+        if (attempt < MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+          continue;
+        }
+        throw e;
+      }
       const data = (await res.json().catch(() => ({}))) as OpenRouterResponse;
       const retryable = res.status === 429 || res.status >= 500;
       if ((!res.ok || data.error) && retryable && attempt < MAX_RETRIES) {

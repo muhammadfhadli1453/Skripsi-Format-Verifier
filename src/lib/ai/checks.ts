@@ -21,6 +21,8 @@ interface TypoHit {
   paraIndex: number;
   word: string;
   suggestion: string;
+  /** "typo" = mistyped Indonesian word; "baku" = English spelling inside an Indonesian sentence */
+  kind?: "typo" | "baku";
 }
 
 /**
@@ -54,8 +56,12 @@ const CHUNK_SYSTEM = `Anda adalah asisten pemeriksa format skripsi Program Studi
 Aturan panduan: "Hanya istilah asing (bahasa Inggris / bahasa lain yang belum diserap ke bahasa Indonesia) yang ditulis miring (italic)."
 Anda menerima paragraf naskah. Teks yang sudah italic ditandai dengan garis bawah: _seperti ini_.
 Tugas 1 (hits): temukan istilah/frasa BERBAHASA INGGRIS (atau bahasa asing lain) yang BELUM italic. Jangan pernah melaporkan kata atau frasa bahasa Indonesia (misalnya "jaringan saraf tiruan", "pra-pemrosesan", "pembelajaran mesin"). Abaikan: nama orang, nama produk/merek/organisasi, singkatan/akronim (CNN, YOLO, API), kata serapan baku KBBI (data, sistem, komputer, internet, komputasi, digital, analisis, algoritma, aplikasi, informasi, teknologi, metode, model, dataset bila sudah lazim), URL, kode program, dan istilah di dalam sitasi/judul referensi.
-Tugas 2 (typos): temukan SALAH KETIK yang jelas pada kata bahasa Indonesia, yaitu huruf tertukar, kurang, lebih, atau dobel (misalnya "pengguanan" → "penggunaan", "sitem" → "sistem", "dengna" → "dengan", "yangg" → "yang"). Laporkan hanya bila Anda yakin itu salah ketik dan perbaikannya jelas. Jangan laporkan: istilah asing, nama orang/tempat/produk, singkatan, kode/rumus, kata yang hanya berbeda gaya bahasa, atau kata tidak baku yang bukan salah ketik.
-Keluarkan HANYA JSON valid dengan bentuk {"hits":[{"paraIndex":number,"term":"istilah persis seperti di teks","context":"maks 8 kata di sekitarnya"}],"typos":[{"paraIndex":number,"word":"kata salah persis seperti di teks","suggestion":"kata yang benar"}]}. Jika tidak ada, gunakan array kosong.`;
+Tugas 2 (typos): baca konteks kalimatnya, lalu laporkan dua jenis kata:
+- kind "typo": SALAH KETIK yang jelas pada kata bahasa Indonesia, yaitu huruf tertukar, kurang, lebih, atau dobel (misalnya "pengguanan" → "penggunaan", "sitem" → "sistem", "dengna" → "dengan", "yangg" → "yang"). Laporkan hanya bila Anda yakin itu salah ketik dan perbaikannya jelas.
+- kind "baku": kata berejaan Inggris di dalam kalimat berbahasa Indonesia, padahal kata itu punya bentuk serapan baku bahasa Indonesia yang lazim (misalnya "sentiment" → "sentimen", "negative" → "negatif", "positive" → "positif", "analysis" → "analisis", "method" → "metode"). Hanya bila kata itu dipakai sebagai kata biasa dalam kalimat Indonesia, bukan bagian dari frasa istilah Inggris yang utuh (misalnya "sentiment analysis", "support vector machine" tetap istilah asing di Tugas 1).
+Jangan laporkan di Tugas 2: nama orang/tempat/produk, singkatan, kode/rumus, kata yang hanya berbeda gaya bahasa.
+Satu kata TIDAK BOLEH muncul di hits dan typos sekaligus: kata Indonesia yang salah ketik (misalnya "statisk", "frekunsi") bukan istilah asing, dan kata berkategori "baku" tidak perlu dimiringkan.
+Keluarkan HANYA JSON valid dengan bentuk {"hits":[{"paraIndex":number,"term":"istilah persis seperti di teks","context":"maks 8 kata di sekitarnya"}],"typos":[{"paraIndex":number,"word":"kata persis seperti di teks","suggestion":"kata yang benar","kind":"typo"|"baku"}]}. Jika tidak ada, gunakan array kosong.`;
 
 const ID_WORDS = new Set(["dan", "atau", "yang", "pada", "untuk", "dengan", "dari", "ke", "di", "jaringan", "saraf", "tiruan", "pembelajaran", "mesin", "pengolahan", "citra", "data", "sistem", "informasi", "pemrosesan", "pra", "pasca", "metode", "model", "analisis", "klasifikasi", "deteksi", "objek", "basis", "pengguna", "antarmuka", "perangkat", "lunak", "keras", "jaringan", "komputer", "kecerdasan", "buatan", "pohon", "keputusan", "hutan", "acak", "pengujian", "pelatihan", "latih", "uji"]);
 function looksIndonesian(term: string): boolean {
@@ -78,6 +84,17 @@ function stripMarkdown(text: string): string {
 /** 0–1 through the whole AI step, with a label for the UI */
 export type AiProgress = (fraction: number, label: string) => void;
 
+/** Levenshtein distance, for telling a typo (1–2 letters off) from a different word. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -91,12 +108,15 @@ function verifyTypos(doc: NormalizedDoc, sections: LogicalSection[], typos: Typo
     const p = doc.paras[t.paraIndex];
     const word = t.word.trim();
     const suggestion = t.suggestion.trim();
-    // one word only: multi-word "typos" from the model are phrasing or punctuation, not spelling
-    if (!p || word.length < 3 || !suggestion || /\s|\d/.test(word) || word === word.toUpperCase()) continue;
+    // one plain word only: multi-word "typos" from the model are phrasing, and dots/digits are punctuation or formulas
+    if (!p || word.length < 3 || !suggestion || !/^\p{L}[\p{L}'-]*$/u.test(word) || word === word.toUpperCase()) continue;
     const lower = word.toLowerCase();
     if (lower === suggestion.toLowerCase() || ruleWords.has(lower)) continue;
     // a suggestion with a space may only split the word ("kategoriyang" → "kategori yang"), not add words
     if (/\s/.test(suggestion) && suggestion.replace(/\s+/g, "").toLowerCase() !== lower) continue;
+    // typos are a letter or two off; a bigger change ("memberi" → "memberikan") is a word choice.
+    // English→baku forms can differ a little more ("method" → "metode")
+    if (editDistance(lower, suggestion.toLowerCase()) > (t.kind === "baku" ? 3 : 2)) continue;
     const m = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(word)}(?![\\p{L}\\p{N}])`, "iu").exec(p.text);
     if (!m) continue;
     const sec = sections.find((s) => s.firstParaIndex <= p.index && p.index <= s.lastParaIndex);
@@ -108,12 +128,15 @@ function verifyTypos(doc: NormalizedDoc, sections: LogicalSection[], typos: Typo
       if (existing.occurrences.length < 30) existing.occurrences.push(loc);
       continue;
     }
+    const baku = t.kind === "baku";
     const issue: Issue = {
-      id: "AI-TYPO-01",
+      id: baku ? "AI-BAKU-01" : "AI-TYPO-01",
       severity: "warning",
-      category: "Salah Ketik (AI)",
-      title: `Salah ketik: "${word}" → "${suggestion}"`,
-      detail: `Ditemukan oleh AI: "${word}" kemungkinan salah ketik dari "${suggestion}". Verifikasi manual tetap dianjurkan.`,
+      category: baku ? "Ejaan Baku (AI)" : "Salah Ketik (AI)",
+      title: baku ? `Gunakan bentuk baku: "${word}" → "${suggestion}"` : `Salah ketik: "${word}" → "${suggestion}"`,
+      detail: baku
+        ? `Ditemukan oleh AI: "${word}" berejaan Inggris di dalam kalimat berbahasa Indonesia; bentuk bakunya "${suggestion}" (tidak perlu dimiringkan). Verifikasi manual tetap dianjurkan.`
+        : `Ditemukan oleh AI: "${word}" kemungkinan salah ketik dari "${suggestion}". Verifikasi manual tetap dianjurkan.`,
       expected: suggestion,
       actual: word,
       fix: `Ganti "${word}" menjadi "${suggestion}" (Ctrl+H untuk mengganti semua).`,
@@ -175,12 +198,26 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
     done++;
     onProgress((done / used.length) * CHUNK_SHARE, chunkLabel());
   };
-  try {
-    const CONCURRENCY = 4;
-    for (let i = 0; i < used.length; i += CONCURRENCY) await Promise.all(used.slice(i, i + CONCURRENCY).map(runChunk));
-  } catch (e) {
-    result.error = `Pemeriksaan istilah asing & salah ketik AI gagal: ${(e as Error).message}`;
+  // a failed chunk only loses its own paragraphs
+  const CONCURRENCY = 4;
+  let failed = 0;
+  let lastError = "";
+  for (let i = 0; i < used.length; i += CONCURRENCY) {
+    const settled = await Promise.allSettled(used.slice(i, i + CONCURRENCY).map(runChunk));
+    for (const s of settled)
+      if (s.status === "rejected") {
+        failed++;
+        lastError = (s.reason as Error)?.message ?? String(s.reason);
+        done++;
+        onProgress((done / used.length) * CHUNK_SHARE, chunkLabel());
+      }
   }
+  if (failed) result.error = `Pemeriksaan istilah asing & salah ketik AI gagal pada ${failed} dari ${used.length} bagian teks: ${lastError}`;
+  // typos first: a word reported as a typo or baku form in a paragraph is not also a foreign term there
+  const typoIssues = verifyTypos(doc, sections, typos, ruleIssues);
+  const typoAt = new Set(typoIssues.flatMap((i) => [i.location, ...(i.occurrences ?? [])].map((l) => `${l.paraIndex}|${i.actual!.toLowerCase()}`)));
+  // the corrected forms ("sentimen", "statistik") are Indonesian and never need italics
+  const corrections = new Set(typoIssues.map((i) => i.expected!.toLowerCase()));
   // verify hits: the term must really appear non-italic in that paragraph
   const byTerm = new Map<string, Issue>();
   for (const h of hits) {
@@ -191,7 +228,7 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
     const inNonItalic = p.runs.some((r) => !r.italic && r.text.toLowerCase().includes(lower));
     if (!inNonItalic) continue;
     if (looksIndonesian(lower)) continue;
-    if (alreadyFlagged.has(p.index)) continue;
+    if (alreadyFlagged.has(p.index) || typoAt.has(`${p.index}|${lower}`) || corrections.has(lower)) continue;
     const sec = sections.find((s) => s.firstParaIndex <= p.index && p.index <= s.lastParaIndex);
     const loc = { page: p.page, paraIndex: p.index, section: sec?.label, snippet: (h.context || p.text).slice(0, 90) };
     const key = lower;
@@ -215,7 +252,7 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
     byTerm.set(key, issue);
     result.issues.push(issue);
   }
-  result.issues.push(...verifyTypos(doc, sections, typos, ruleIssues));
+  result.issues.push(...typoIssues);
   if (chunks.length > MAX_CHUNKS) result.issues.push({ id: "AI-INFO", severity: "info", category: "Istilah Asing (AI)", title: "Pemeriksaan AI dibatasi", detail: `Hanya ${MAX_CHUNKS} dari ${chunks.length} bagian teks yang diperiksa AI untuk membatasi biaya.`, location: {}, source: "ai" });
 
   // ---- 2. summary ----
@@ -231,7 +268,8 @@ export async function runAiChecks(doc: NormalizedDoc, sections: LogicalSection[]
       maxTokens: 700,
       temperature: 0.2,
       system: "Anda asisten asistensi penulisan skripsi Prodi Informatika Universitas Khairun. Jawab dalam bahasa Indonesia yang ringkas, ramah, dan konkret, dalam teks biasa (plain text): JANGAN gunakan markdown sama sekali (tanpa #, tanpa **, tanpa tabel). Satu paragraf pembuka, lalu maksimal 6 poin prioritas bernomor (1., 2., …), lalu satu kalimat penutup.",
-      user: `Naskah: ${report.docType.toUpperCase()}, ${report.pageCount ?? "?"} halaman, ${report.summary.errors} kesalahan, ${report.summary.warnings} peringatan.\nTemuan pemeriksaan format:\n${list || "(tidak ada temuan)"}\n\nBuat ringkasan singkat untuk mahasiswa: kondisi umum naskah dan urutan prioritas perbaikan (mulai dari yang paling sering ditolak saat asistensi: sampul, nomor halaman, spasi, font).`,
+      // DOCX has no page count; "? halaman" made the model report the page count as unreadable
+      user: `Naskah: ${report.docType.toUpperCase()}, ${report.pageCount ? `${report.pageCount} halaman, ` : ""}${report.summary.errors} kesalahan, ${report.summary.warnings} peringatan.\nTemuan pemeriksaan format:\n${list || "(tidak ada temuan)"}\n\nBuat ringkasan singkat untuk mahasiswa: kondisi umum naskah dan urutan prioritas perbaikan (mulai dari yang paling sering ditolak saat asistensi: sampul, nomor halaman, spasi, font).`,
     });
     result.inputTokens += res.inputTokens;
     result.outputTokens += res.outputTokens;
