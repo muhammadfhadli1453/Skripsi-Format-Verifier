@@ -1,4 +1,5 @@
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { BlobStoreSuspendedError } from "@vercel/blob";
 
 /** Neon via the Vercel Marketplace sets DATABASE_URL (and POSTGRES_URL as an alias). */
 const databaseUrl = () => process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -10,6 +11,12 @@ export function dbConfigured(): boolean {
 /** Private store: BLOB_STORE_ID (+ OIDC on Vercel) or a read-write token. */
 export function blobConfigured(): boolean {
   return !!(process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+/** User-facing text for a failed Blob call; a suspended store (usually an exhausted quota) gets its own. */
+export function blobErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof BlobStoreSuspendedError) return "Penyimpanan berkas (Vercel Blob) sedang ditangguhkan, biasanya karena kuota habis. Hubungi pengelola aplikasi.";
+  return err instanceof Error ? err.message : fallback;
 }
 
 /** Uploads are kept (and the leaderboard shown) only when both stores exist. */

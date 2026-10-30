@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { get } from "@vercel/blob";
-import { storageEnabled } from "@/lib/storage/db";
+import { blobErrorMessage, storageEnabled } from "@/lib/storage/db";
 import { findTopFile } from "@/lib/storage/submissions";
 
 export const runtime = "nodejs";
@@ -12,7 +12,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const found = await findTopFile(id);
   if (!found) return NextResponse.json({ error: "Berkas tidak ditemukan atau tidak lagi termasuk 5 besar." }, { status: 404 });
-  const blob = await get(found.blobPathname, { access: "private" });
+  let blob: Awaited<ReturnType<typeof get>>;
+  try {
+    blob = await get(found.blobPathname, { access: "private" });
+  } catch (err) {
+    console.error("download failed", err);
+    return NextResponse.json({ error: blobErrorMessage(err, "Gagal mengambil berkas.") }, { status: 503 });
+  }
   if (!blob || blob.statusCode !== 200) return NextResponse.json({ error: "Berkas sudah tidak tersedia." }, { status: 404 });
   const ascii = found.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   return new Response(blob.stream, {
