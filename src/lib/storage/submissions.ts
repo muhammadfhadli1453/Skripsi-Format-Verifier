@@ -3,6 +3,9 @@ import { getSql } from "./db";
 
 export const UPLOAD_PREFIX = "uploads/";
 
+/** The leaderboard tabs besides "all"; their top 5s are what storage keeps. */
+const RANKED_TYPES: DocType[] = ["proposal", "skripsi", "kp", "hasil"];
+
 export interface LeaderboardEntry {
   /** submission id; its file is downloadable while it stays in a top 5 */
   id: string;
@@ -26,6 +29,20 @@ export async function saveSubmission(blobPathname: string, ruleReport: VerifyRep
     VALUES (${blobPathname}, ${ruleReport.fileName}, ${ruleReport.source}, ${ruleReport.docType}, ${s.score}, ${s.errors}, ${s.warnings}, ${s.infos}, ${ruleReport.pageCount ?? null}, ${ruleReport.student?.name ?? null}, ${ruleReport.student?.studentId ?? null}, ${true})
     RETURNING id`;
   return { id: rows[0].id as string };
+}
+
+/**
+ * Keeps only what the leaderboard can show (the overall top 5 and each tab's top 5) and deletes
+ * every other row. Returns the deleted rows' blob pathnames so the caller can delete the files.
+ */
+export async function pruneToTop(): Promise<string[]> {
+  const sql = await getSql();
+  // rows a concurrent request inserts after this moment are left for that request's own prune
+  const [{ cutoff }] = await sql`SELECT now() AS cutoff`;
+  const tops = await Promise.all([undefined, ...RANKED_TYPES].map((t) => topScores(t)));
+  const keep = [...new Set(tops.flat().map((e) => e.id))];
+  const rows = await sql`DELETE FROM submissions WHERE created_at <= ${cutoff} AND NOT (id = ANY(${keep}::uuid[])) RETURNING blob_pathname`;
+  return rows.map((r) => r.blob_pathname as string);
 }
 
 /** True when the pathname was already claimed by a submission (one upload, one entry). */

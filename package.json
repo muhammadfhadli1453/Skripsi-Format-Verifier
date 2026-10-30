@@ -16,7 +16,8 @@
     "dump": "tsx scripts/dump.mts",
     "fixture": "tsx scripts/make-fixture.mts",
     "typecheck": "tsc --noEmit -p .",
-    "db:init": "tsx scripts/db-init.mts"
+    "db:init": "tsx scripts/db-init.mts",
+    "db:prune": "tsx scripts/prune.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

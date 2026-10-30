@@ -6,7 +6,7 @@ import { detectSections } from "@/lib/sections";
 import { aiAvailable, aiConfig, missingKeyMessage } from "@/lib/ai/provider";
 import { runAiChecks } from "@/lib/ai/checks";
 import { storageEnabled } from "@/lib/storage/db";
-import { UPLOAD_PREFIX, pathnameUsed, saveSubmission } from "@/lib/storage/submissions";
+import { UPLOAD_PREFIX, pathnameUsed, pruneToTop, saveSubmission } from "@/lib/storage/submissions";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -107,7 +107,14 @@ async function run(req: Request, progress: Progress): Promise<VerifyReport> {
       try {
         const sub = await saveSubmission(input.blobPathname, report);
         saved = true;
-        finalReport = { ...finalReport, submission: { id: sub.id, rankedScore } };
+        // only the top 5s are kept; everything else, this upload included if it didn't place, is deleted
+        const dropped = await pruneToTop().catch((e) => {
+          console.error("pruneToTop failed", e);
+          return [] as string[];
+        });
+        if (dropped.length) await del(dropped).catch((e) => console.error("deleting pruned blobs failed", e));
+        const kept = !dropped.includes(input.blobPathname);
+        finalReport = { ...finalReport, submission: { id: kept ? sub.id : undefined, kept, rankedScore } };
       } catch (e) {
         finalReport = { ...finalReport, submission: { rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` } };
       }

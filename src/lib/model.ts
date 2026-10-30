@@ -258,9 +258,12 @@ export interface VerifyReport {
   ai?: { used: boolean; model?: string; error?: string; inputTokens?: number; outputTokens?: number };
   /** name/NPM read from the cover (used for the leaderboard) */
   student?: { name?: string; studentId?: string };
-  /** present when the upload was kept in storage */
+  /** present when the upload went through storage */
   submission?: {
+    /** set only while the upload is kept */
     id?: string;
+    /** false when the score missed every top 5, so the file and row were deleted */
+    kept?: boolean;
     /** same as summary.score */
     rankedScore: number;
     error?: string;

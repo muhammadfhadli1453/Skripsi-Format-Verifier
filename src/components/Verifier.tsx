@@ -17,6 +17,24 @@ const MIME = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-off
 
 type StreamEvent = { type: "progress"; pct: number; label: string } | { type: "result"; report: VerifyReport } | { type: "error"; message: string };
 
+/**
+ * The Blob client reports any /api/upload failure as "Failed to retrieve the presigned URL" and drops
+ * the server's message; asking again with the same event recovers it.
+ */
+async function presignFailureReason(pathname: string): Promise<string | undefined> {
+  try {
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "blob.generate-presigned-url", payload: { pathname, clientPayload: null, multipart: false } }),
+    });
+    if (res.ok) return undefined;
+    return ((await res.json()) as { error?: string }).error;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reads the NDJSON stream from /api/verify?stream=1, reporting progress until the result arrives. */
 async function readVerifyStream(res: Response, onProgress: (pct: number, label: string) => void): Promise<VerifyReport> {
   if (!res.body) throw new Error(`Gagal (${res.status})`);
@@ -90,11 +108,14 @@ export function Verifier() {
       if (storage) {
         // straight to private Blob, so files over the 4.5 MB function body limit still work; the upload is 0–30%
         const ext = /\.pdf$/i.test(file.name) ? "pdf" : "docx";
-        const blob = await uploadPresigned(`uploads/${blobName(file.name)}`, file, {
+        const pathname = `uploads/${blobName(file.name)}`;
+        const blob = await uploadPresigned(pathname, file, {
           access: "private",
           handleUploadUrl: "/api/upload",
           contentType: MIME[ext],
           onUploadProgress: ({ percentage }) => advance(Math.round(percentage * 0.3), `Mengunggah berkas… ${Math.round(percentage)}%`),
+        }).catch(async (e: Error) => {
+          throw /presigned URL/.test(e.message) ? new Error((await presignFailureReason(pathname)) ?? e.message) : e;
         });
         res = await fetch("/api/verify?stream=1", {
           method: "POST",
@@ -202,7 +223,7 @@ export function Verifier() {
             </div>
           </div>
         )}
-        {storage && <p className="mt-4 text-xs text-muted">Setiap naskah yang diperiksa masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul. Naskah yang masuk 5 besar dapat diunduh siapa pun sebagai contoh; naskah lain tidak dibagikan.</p>}
+        {storage && <p className="mt-4 text-xs text-muted">Naskah yang skornya masuk 5 besar disimpan di papan peringkat dengan nama dan NPM yang dibaca dari sampul, dan dapat diunduh siapa pun sebagai contoh. Naskah lain dihapus setelah diperiksa.</p>}
         {error && <p className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       </section>
 
@@ -212,6 +233,8 @@ export function Verifier() {
         <div className="no-print flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
           {report.submission.error ? (
             <span className="text-amber-700 dark:text-amber-300">{report.submission.error}</span>
+          ) : report.submission.kept === false ? (
+            <span>Skor belum masuk 5 besar, jadi berkas tidak disimpan.</span>
           ) : (
             <>
               <span>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { issueSignedToken } from "@vercel/blob";
+import { BlobStoreSuspendedError, issueSignedToken } from "@vercel/blob";
 import { handleUploadPresigned, type HandleUploadPresignedBody } from "@vercel/blob/client";
 import { storageEnabled } from "@/lib/storage/db";
 import { UPLOAD_PREFIX } from "@/lib/storage/submissions";
@@ -30,6 +30,13 @@ export async function POST(req: Request) {
     });
     return NextResponse.json(result);
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Gagal menyiapkan unggahan." }, { status: 400 });
+    console.error("presigned upload failed", err);
+    const message =
+      err instanceof BlobStoreSuspendedError
+        ? "Penyimpanan berkas (Vercel Blob) sedang ditangguhkan, biasanya karena kuota habis. Hubungi pengelola aplikasi."
+        : err instanceof Error
+          ? err.message
+          : "Gagal menyiapkan unggahan.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }
