@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { uploadPresigned } from "@vercel/blob/client";
 import type { Issue, Severity, VerifyReport } from "@/lib/model";
+import { DIRECT_UPLOAD_MAX_BYTES, MIME, blobName } from "@/lib/upload";
 import { ReportView } from "./ReportView";
 import { Leaderboard } from "./Leaderboard";
 
@@ -12,8 +13,6 @@ interface ServerStatus {
   storage: boolean;
   ai: { available: boolean; label?: string };
 }
-
-const MIME = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
 
 type StreamEvent = { type: "progress"; pct: number; label: string } | { type: "result"; report: VerifyReport } | { type: "error"; message: string };
 
@@ -57,9 +56,6 @@ async function readVerifyStream(res: Response, onProgress: (pct: number, label: 
   }
   throw new Error("Koneksi terputus sebelum pemeriksaan selesai. Coba lagi.");
 }
-
-/** Blob pathnames: keep the name readable but drop characters that need escaping. */
-const blobName = (name: string) => name.replace(/[^\w.-]+/g, "_").replace(/_+/g, "_").replace(/\.(docx|pdf)$/i, (m) => m.toLowerCase());
 
 export function Verifier() {
   const [file, setFile] = useState<File | null>(null);
@@ -105,8 +101,8 @@ export function Verifier() {
     setProgress({ pct: 0, label: "Mengunggah berkas…" });
     try {
       let res: Response;
-      if (storage) {
-        // straight to private Blob, so files over the 4.5 MB function body limit still work; the upload is 0–30%
+      if (storage && file.size > DIRECT_UPLOAD_MAX_BYTES) {
+        // too large for a function request body, so it travels through private Blob; the upload is 0–30%
         const ext = /\.pdf$/i.test(file.name) ? "pdf" : "docx";
         const pathname = `uploads/${blobName(file.name)}`;
         const blob = await uploadPresigned(pathname, file, {
@@ -123,12 +119,14 @@ export function Verifier() {
           body: JSON.stringify({ blobPathname: blob.pathname, fileName: file.name, docType, ai: useAi && aiUsable }),
         });
       } else {
+        // small files go straight to the checker; the server stores them only if the score places
         advance(10, "Mengunggah berkas…");
         const fd = new FormData();
         fd.append("file", file);
         fd.append("docType", docType);
         fd.append("ai", useAi && aiUsable ? "1" : "0");
         res = await fetch("/api/verify?stream=1", { method: "POST", body: fd });
+        if (res.status === 413) throw new Error("Berkas terlalu besar untuk dikirim langsung. Perkecil berkas, lalu coba lagi.");
       }
       const data = await readVerifyStream(res, advance);
       advance(100, "Selesai");
@@ -223,7 +221,7 @@ export function Verifier() {
             </div>
           </div>
         )}
-        {storage && <p className="mt-4 text-xs text-muted">Naskah yang skornya masuk 5 besar disimpan di papan peringkat dengan nama dan NPM yang dibaca dari sampul, dan dapat diunduh siapa pun sebagai contoh. Naskah lain dihapus setelah diperiksa.</p>}
+        {storage && <p className="mt-4 text-xs text-muted">Naskah yang skornya masuk 5 besar disimpan di papan peringkat dengan nama dan NPM yang dibaca dari sampul, dan dapat diunduh siapa pun sebagai contoh. Naskah lain tidak disimpan.</p>}
         {error && <p className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       </section>
 
@@ -238,9 +236,10 @@ export function Verifier() {
           ) : (
             <>
               <span>
-                Berkas tersimpan dan masuk papan peringkat sebagai <span className="font-semibold">{report.student?.name ?? "Tanpa nama"}</span>
+                {report.submission.fileStored === false ? "Skor masuk papan peringkat" : "Berkas tersimpan dan masuk papan peringkat"} sebagai <span className="font-semibold">{report.student?.name ?? "Tanpa nama"}</span>
                 {report.student?.studentId ? <span className="font-mono text-muted"> ({report.student.studentId})</span> : null}
                 {!report.student?.name || !report.student?.studentId ? <span className="text-amber-700 dark:text-amber-300"> · nama/NPM tidak terbaca dari sampul (baris setelah OLEH)</span> : null}
+                {report.submission.fileStored === false ? <span className="text-amber-700 dark:text-amber-300"> · berkas tidak dapat disimpan karena penyimpanan berkas sedang tidak tersedia, jadi belum bisa diunduh</span> : null}
               </span>
             </>
           )}

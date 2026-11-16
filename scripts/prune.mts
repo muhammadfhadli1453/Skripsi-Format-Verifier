@@ -2,7 +2,8 @@
 // uploads that never got a row (the check was abandoned or its cleanup failed).
 //   npm run db:prune            (reads DATABASE_URL and Blob credentials from the environment, .env.local or .env)
 //   npm run db:prune -- --dry   (only reports what would be deleted)
-// The app prunes after every check; this is for data stored before that, and for stray files.
+// The app prunes after every check; this is for data stored before that, and for stray files
+// (large uploads whose check was abandoned, or files whose deletion failed while Blob was suspended).
 import fs from "node:fs";
 import { del, list } from "@vercel/blob";
 import { getSql } from "../src/lib/storage/db";
@@ -29,17 +30,19 @@ try {
 }
 
 const sql = await getSql();
-let pruned: string[];
+let pruned: (string | null)[];
 if (dry) {
   const tops = await Promise.all([undefined, "proposal", "skripsi", "kp", "hasil"].map((t) => topScores(t as never)));
   const keep = [...new Set(tops.flat().map((e) => e.id))];
   const rows = await sql`SELECT blob_pathname FROM submissions WHERE NOT (id = ANY(${keep}::uuid[]))`;
-  pruned = rows.map((r) => r.blob_pathname as string);
+  pruned = rows.map((r) => r.blob_pathname as string | null);
 } else {
-  pruned = await pruneToTop();
+  pruned = (await pruneToTop()).map((r) => r.blobPathname ?? null);
 }
-const kept = new Set((await sql`SELECT blob_pathname FROM submissions`).map((r) => r.blob_pathname as string));
-console.log(`${dry ? "Akan dihapus" : "Dihapus"}: ${pruned.length} baris; tersisa ${kept.size - (dry ? pruned.length : 0)}.`);
+// rows without a file (their score placed while Blob was unavailable) have no pathname
+const remaining = await sql`SELECT blob_pathname FROM submissions`;
+const kept = new Set(remaining.flatMap((r) => (r.blob_pathname ? [r.blob_pathname as string] : [])));
+console.log(`${dry ? "Akan dihapus" : "Dihapus"}: ${pruned.length} baris; tersisa ${remaining.length - (dry ? pruned.length : 0)}.`);
 
 // every file under uploads/ that no remaining row points to
 const doomed: string[] = [];

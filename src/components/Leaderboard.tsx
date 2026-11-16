@@ -5,6 +5,7 @@ import type { DocType } from "@/lib/model";
 
 interface Entry {
   id: string;
+  hasFile: boolean;
   rank: number;
   name?: string;
   studentId?: string;
@@ -73,9 +74,15 @@ export function Leaderboard({ refreshKey }: { refreshKey: number }) {
                 </p>
               </div>
               <span className="text-lg font-bold tabular-nums">{e.score}</span>
-              <a href={`/api/submissions/${e.id}/file`} title={e.fileName} className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent/60">
-                Unduh
-              </a>
+              {e.hasFile ? (
+                <a href={`/api/submissions/${e.id}/file`} title={e.fileName} className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent/60">
+                  Unduh
+                </a>
+              ) : (
+                <span title="Berkas tidak tersimpan karena penyimpanan berkas sedang tidak tersedia saat naskah diperiksa." className="shrink-0 px-3 py-1.5 text-xs text-muted">
+                  Tanpa berkas
+                </span>
+              )}
             </li>
           ))}
         </ol>

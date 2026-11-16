@@ -9,6 +9,8 @@ const RANKED_TYPES: DocType[] = ["proposal", "skripsi", "kp", "hasil"];
 export interface LeaderboardEntry {
   /** submission id; its file is downloadable while it stays in a top 5 */
   id: string;
+  /** false when the file could not be stored, so there is nothing to download */
+  hasFile: boolean;
   rank: number;
   /** undefined when the cover had no readable name */
   name?: string;
@@ -20,8 +22,11 @@ export interface LeaderboardEntry {
   createdAt: string;
 }
 
-/** Every checked upload goes on the leaderboard under the name/NPM read from its cover. */
-export async function saveSubmission(blobPathname: string, ruleReport: VerifyReport): Promise<{ id: string }> {
+/**
+ * Every checked upload goes on the leaderboard under the name/NPM read from its cover.
+ * `blobPathname` is null for a file that came in the request body: it is stored only once it places.
+ */
+export async function saveSubmission(blobPathname: string | null, ruleReport: VerifyReport): Promise<{ id: string }> {
   const sql = await getSql();
   const s = ruleReport.summary;
   const rows = await sql`
@@ -31,18 +36,31 @@ export async function saveSubmission(blobPathname: string, ruleReport: VerifyRep
   return { id: rows[0].id as string };
 }
 
+/** Links the stored file to its row; false when the row was pushed out of the top 5s meanwhile. */
+export async function attachFile(id: string, blobPathname: string): Promise<boolean> {
+  const sql = await getSql();
+  const rows = await sql`UPDATE submissions SET blob_pathname = ${blobPathname} WHERE id = ${id}::uuid AND blob_pathname IS NULL RETURNING id`;
+  return rows.length > 0;
+}
+
+export interface PrunedRow {
+  id: string;
+  /** the file to delete, if the row had one */
+  blobPathname?: string;
+}
+
 /**
  * Keeps only what the leaderboard can show (the overall top 5 and each tab's top 5) and deletes
- * every other row. Returns the deleted rows' blob pathnames so the caller can delete the files.
+ * every other row. Returns the deleted rows so the caller can delete their files.
  */
-export async function pruneToTop(): Promise<string[]> {
+export async function pruneToTop(): Promise<PrunedRow[]> {
   const sql = await getSql();
   // rows a concurrent request inserts after this moment are left for that request's own prune
   const [{ cutoff }] = await sql`SELECT now() AS cutoff`;
   const tops = await Promise.all([undefined, ...RANKED_TYPES].map((t) => topScores(t)));
   const keep = [...new Set(tops.flat().map((e) => e.id))];
-  const rows = await sql`DELETE FROM submissions WHERE created_at <= ${cutoff} AND NOT (id = ANY(${keep}::uuid[])) RETURNING blob_pathname`;
-  return rows.map((r) => r.blob_pathname as string);
+  const rows = await sql`DELETE FROM submissions WHERE created_at <= ${cutoff} AND NOT (id = ANY(${keep}::uuid[])) RETURNING id, blob_pathname`;
+  return rows.map((r) => ({ id: r.id as string, blobPathname: (r.blob_pathname as string | null) ?? undefined }));
 }
 
 /** True when the pathname was already claimed by a submission (one upload, one entry). */
@@ -61,7 +79,7 @@ export async function findTopFile(id: string): Promise<{ blobPathname: string; f
   const sql = await getSql();
   const rows = await sql`SELECT blob_pathname, file_name, doc_type FROM submissions WHERE id = ${id}::uuid AND on_leaderboard`;
   const row = rows[0];
-  if (!row) return undefined;
+  if (!row?.blob_pathname) return undefined;
   const [overall, ofType] = await Promise.all([topScores(undefined), topScores(row.doc_type as DocType)]);
   if (![...overall, ...ofType].some((e) => e.id === id)) return undefined;
   return { blobPathname: row.blob_pathname as string, fileName: row.file_name as string };
@@ -74,8 +92,8 @@ export async function findTopFile(id: string): Promise<{ blobPathname: string; f
 export async function topScores(docType: DocType | undefined, limit = 5): Promise<LeaderboardEntry[]> {
   const sql = await getSql();
   const rows = await sql`
-    SELECT id, display_name, student_id, doc_type, file_name, score, created_at FROM (
-      SELECT DISTINCT ON (COALESCE(student_id, id::text)) id, display_name, student_id, doc_type, file_name, score, created_at
+    SELECT id, blob_pathname IS NOT NULL AS has_file, display_name, student_id, doc_type, file_name, score, created_at FROM (
+      SELECT DISTINCT ON (COALESCE(student_id, id::text)) id, blob_pathname, display_name, student_id, doc_type, file_name, score, created_at
       FROM submissions
       WHERE on_leaderboard AND (${docType ?? null}::text IS NULL OR doc_type = ${docType ?? null})
       ORDER BY COALESCE(student_id, id::text), score DESC, created_at ASC
@@ -84,6 +102,7 @@ export async function topScores(docType: DocType | undefined, limit = 5): Promis
     LIMIT ${limit}`;
   return rows.map((r, i) => ({
     id: r.id as string,
+    hasFile: r.has_file as boolean,
     rank: i + 1,
     name: (r.display_name as string | null) ?? undefined,
     studentId: (r.student_id as string | null) ?? undefined,

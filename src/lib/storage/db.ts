@@ -45,7 +45,8 @@ export async function ensureSchema(sql: NeonQueryFunction<false, false>): Promis
   await sql`
     CREATE TABLE IF NOT EXISTS submissions (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      blob_pathname text NOT NULL UNIQUE,
+      -- null when the score placed but the file could not be stored (Blob unavailable)
+      blob_pathname text UNIQUE,
       file_name text NOT NULL,
       source text NOT NULL,
       doc_type text NOT NULL,
@@ -62,5 +63,6 @@ export async function ensureSchema(sql: NeonQueryFunction<false, false>): Promis
     )`;
   // private download tokens were replaced by public downloads of the top 5
   await sql`ALTER TABLE submissions DROP COLUMN IF EXISTS token_hash`;
+  await sql`ALTER TABLE submissions ALTER COLUMN blob_pathname DROP NOT NULL`;
   await sql`CREATE INDEX IF NOT EXISTS submissions_leaderboard_idx ON submissions (student_id, score DESC) WHERE on_leaderboard`;
 }

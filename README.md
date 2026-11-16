@@ -10,8 +10,8 @@ bawaan, dapat dimatikan) hanya untuk (1) istilah asing yang belum italic, (2) sa
 prioritas perbaikan. Penyedia AI dapat dipilih: **OpenRouter** (model dari `OPENROUTER_MODEL`) atau **Anthropic**
 langsung (bawaan `claude-haiku-4-5`). Lihat `.env.example`.
 
-Bila penyimpanan dikonfigurasi (Vercel Blob privat + Neon Postgres), berkas yang diunggah disimpan agar
-tersedia **papan peringkat** 5 skor format tertinggi yang naskahnya dapat diunduh sebagai contoh.
+Bila penyimpanan dikonfigurasi (Vercel Blob privat + Neon Postgres), tersedia **papan peringkat** 5 skor
+format tertinggi yang naskahnya dapat diunduh sebagai contoh. Hanya naskah yang masuk 5 besar yang disimpan.
 
 ## Menjalankan
 
@@ -48,9 +48,10 @@ src/lib/ai/provider.ts      pemilihan penyedia AI (AI_PROVIDER: openrouter | ant
 src/lib/ai/checks.ts        pemeriksaan AI: istilah asing, salah ketik & ringkasan
 src/lib/storage/db.ts       Neon (lazy) + skema tabel submissions; deteksi konfigurasi Blob/DB
 src/lib/storage/submissions.ts  simpan unggahan, papan peringkat, izin unduh 5 besar
-src/app/api/verify/route.ts POST JSON {blobPathname, docType, ai, leaderboard} (dengan penyimpanan)
-                            atau multipart (file, docType, ai) tanpa penyimpanan → VerifyReport JSON
-src/app/api/upload/route.ts presigned PUT ke Blob privat (unggah langsung dari browser, maks. 40 MB)
+src/app/api/verify/route.ts POST multipart (file, docType, ai) untuk berkas ≤ 4 MB, atau JSON
+                            {blobPathname, docType, ai} untuk berkas besar yang lewat Blob → VerifyReport JSON
+src/app/api/upload/route.ts presigned PUT ke Blob privat (hanya berkas > 4 MB, maks. 40 MB)
+src/lib/upload.ts           batas unggah langsung (4 MB) dan nama berkas Blob, dipakai browser & server
 src/app/api/leaderboard     GET ?docType= → 5 teratas;  src/app/api/status → fitur yang aktif
 src/app/api/submissions/[id]/file  GET → unduh berkas (hanya naskah yang sedang masuk 5 besar)
 src/components/*            UI unggah, laporan, papan peringkat
@@ -66,12 +67,22 @@ src/components/*            UI unggah, laporan, papan peringkat
 Tanpa kedua variabel itu aplikasi tetap berjalan seperti semula (berkas tidak disimpan, papan peringkat
 disembunyikan). Catatan: tanpa Blob, berkas dikirim di badan request, yang di Vercel dibatasi 4,5 MB.
 
+Alur unggah (hemat kuota Blob; paket Hobby hanya memberi 2.000 operasi tulis per bulan):
+
+- **Berkas ≤ 4 MB** dikirim langsung ke `/api/verify`. Server baru mengunggahnya ke Blob bila skornya masuk
+  5 besar, jadi sebagian besar pemeriksaan tidak menyentuh Blob sama sekali.
+- **Berkas > 4 MB** tidak muat di badan request Vercel (batas 4,5 MB), sehingga browser mengunggahnya ke Blob
+  lebih dulu (satu operasi per berkas) dan berkas dihapus lagi bila tidak masuk 5 besar.
+- **Bila Blob ditangguhkan** (kuota habis), berkas ≤ 4 MB tetap diperiksa; skor yang masuk 5 besar tetap
+  dicatat di papan peringkat tanpa berkas (label "Tanpa berkas", tanpa tombol unduh). Berkas > 4 MB tidak
+  dapat diperiksa sampai Blob aktif kembali.
+
 Aturan: skor = skor **berbasis aturan saja**. Temuan AI tetap ditampilkan dan dihitung jumlahnya, tetapi
 tidak mengubah skor, sehingga skor di laporan sama dengan skor di papan peringkat. Setiap naskah yang diperiksa
 otomatis masuk papan peringkat dengan nama dan NPM yang dibaca dari sampul (baris setelah OLEH;
 `src/lib/student.ts`). Satu baris per NPM (skor terbaiknya); naskah tanpa NPM terbaca
 tampil sendiri sebagai "Tanpa nama". Seri dimenangkan unggahan lebih awal. Naskah yang sedang masuk 5 besar (keseluruhan
-atau per jenis naskah) dapat diunduh siapa pun sebagai contoh; naskah lain tetap privat di Blob. Tidak ada akun
+atau per jenis naskah) dapat diunduh siapa pun sebagai contoh; naskah lain tidak disimpan. Tidak ada akun
 pengguna.
 
 ## Cakupan aturan (ringkas)

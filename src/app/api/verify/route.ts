@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { del, get } from "@vercel/blob";
+import { del, get, put } from "@vercel/blob";
 import type { DocType, VerifyReport } from "@/lib/model";
 import { analyze } from "@/lib/verify";
 import { detectSections } from "@/lib/sections";
 import { aiAvailable, aiConfig, missingKeyMessage } from "@/lib/ai/provider";
 import { runAiChecks } from "@/lib/ai/checks";
 import { storageEnabled } from "@/lib/storage/db";
-import { UPLOAD_PREFIX, pathnameUsed, pruneToTop, saveSubmission } from "@/lib/storage/submissions";
+import { UPLOAD_PREFIX, attachFile, pathnameUsed, pruneToTop, saveSubmission, type PrunedRow } from "@/lib/storage/submissions";
+import { blobName, mimeOf } from "@/lib/upload";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -26,7 +27,7 @@ interface Input {
   name: string;
   docType: DocType | "auto";
   wantAi: boolean;
-  /** set when the file came through Blob and should be kept */
+  /** set when the file came through Blob (too large for the request body) */
   blobPathname?: string;
 }
 
@@ -35,7 +36,7 @@ const checkName = (name: string) => {
   if (!/\.(docx|pdf)$/i.test(name)) throw new BadRequest("Format tidak didukung. Gunakan .docx atau .pdf.");
 };
 
-/** Without storage: the file comes in the request body (local dev; capped at 4.5 MB on Vercel). */
+/** The file comes in the request body (capped at 4.5 MB on Vercel, so the browser sends only small files this way). */
 async function readMultipart(req: Request): Promise<Input> {
   const form = await req.formData();
   const file = form.get("file");
@@ -46,7 +47,7 @@ async function readMultipart(req: Request): Promise<Input> {
   return { buffer: Buffer.from(await file.arrayBuffer()), name, docType: pickDocType(form.get("docType")), wantAi: String(form.get("ai") ?? "0") === "1" };
 }
 
-/** With storage: the browser already uploaded to private Blob and sends the pathname. */
+/** Large files: the browser already uploaded to private Blob and sends the pathname. */
 async function readFromBlob(req: Request, claim: (pathname: string) => void): Promise<Input> {
   if (!storageEnabled()) throw new BadRequest("Penyimpanan berkas belum dikonfigurasi.", 503);
   const body = (await req.json()) as { blobPathname?: string; fileName?: string; docType?: string; ai?: boolean };
@@ -62,6 +63,50 @@ async function readFromBlob(req: Request, claim: (pathname: string) => void): Pr
   if (blob.blob.size > MAX_BYTES) throw new BadRequest("Berkas terlalu besar (maks. 40 MB).", 413);
   const buffer = Buffer.from(await new Response(blob.stream).arrayBuffer());
   return { buffer, name, docType: pickDocType(body.docType), wantAi: body.ai === true, blobPathname };
+}
+
+type Submission = NonNullable<VerifyReport["submission"]>;
+
+/**
+ * Puts the score on the leaderboard and keeps the file only if it places in a top 5.
+ * A file from the request body is uploaded to Blob only then, so most checks never touch Blob.
+ */
+async function record(input: Input, report: VerifyReport, onSaved: () => void): Promise<Submission> {
+  const rankedScore = report.summary.score;
+  let id: string;
+  try {
+    id = (await saveSubmission(input.blobPathname ?? null, report)).id;
+    onSaved();
+  } catch (e) {
+    return { rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` };
+  }
+  // only the top 5s are kept; everything else, this upload included if it didn't place, is deleted
+  let dropped: PrunedRow[] | undefined;
+  try {
+    dropped = await pruneToTop();
+  } catch (e) {
+    console.error("pruneToTop failed", e);
+  }
+  const files = (dropped ?? []).flatMap((d) => (d.blobPathname ? [d.blobPathname] : []));
+  if (files.length) await del(files).catch((e) => console.error("deleting pruned blobs failed", e));
+  if (dropped?.some((d) => d.id === id)) return { kept: false, rankedScore };
+  if (input.blobPathname) return { id, kept: true, fileStored: true, rankedScore };
+  // without a prune result it is unknown whether the score placed, so don't spend an upload on it
+  if (!dropped) return { id, kept: true, fileStored: false, rankedScore };
+
+  let stored: string | undefined;
+  try {
+    stored = (await put(`${UPLOAD_PREFIX}${blobName(input.name)}`, input.buffer, { access: "private", addRandomSuffix: true, contentType: mimeOf(input.name) })).pathname;
+    if (await attachFile(id, stored)) return { id, kept: true, fileStored: true, rankedScore };
+    // another upload pushed this one out while the file was on its way
+    await del(stored).catch(() => {});
+    return { kept: false, rankedScore };
+  } catch (e) {
+    // a suspended or unreachable store must not cost the student the result or the rank
+    console.error("storing a top-5 file failed", e);
+    if (stored) await del(stored).catch(() => {});
+    return { id, kept: true, fileStored: false, rankedScore };
+  }
 }
 
 /** Overall percentage (the browser upload is 0–30) and a label for the progress bar. */
@@ -101,23 +146,9 @@ async function run(req: Request, progress: Progress): Promise<VerifyReport> {
       }
     }
 
-    if (input.blobPathname) {
+    if (storageEnabled()) {
       progress(97, "Menyimpan ke papan peringkat…");
-      const rankedScore = report.summary.score;
-      try {
-        const sub = await saveSubmission(input.blobPathname, report);
-        saved = true;
-        // only the top 5s are kept; everything else, this upload included if it didn't place, is deleted
-        const dropped = await pruneToTop().catch((e) => {
-          console.error("pruneToTop failed", e);
-          return [] as string[];
-        });
-        if (dropped.length) await del(dropped).catch((e) => console.error("deleting pruned blobs failed", e));
-        const kept = !dropped.includes(input.blobPathname);
-        finalReport = { ...finalReport, submission: { id: kept ? sub.id : undefined, kept, rankedScore } };
-      } catch (e) {
-        finalReport = { ...finalReport, submission: { rankedScore, error: `Berkas tidak tersimpan: ${(e as Error).message}` } };
-      }
+      finalReport = { ...finalReport, submission: await record(input, report, () => (saved = true)) };
     }
     return finalReport;
   } finally {

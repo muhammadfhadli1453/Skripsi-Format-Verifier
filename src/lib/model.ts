@@ -258,12 +258,14 @@ export interface VerifyReport {
   ai?: { used: boolean; model?: string; error?: string; inputTokens?: number; outputTokens?: number };
   /** name/NPM read from the cover (used for the leaderboard) */
   student?: { name?: string; studentId?: string };
-  /** present when the upload went through storage */
+  /** present when storage is configured */
   submission?: {
     /** set only while the upload is kept */
     id?: string;
-    /** false when the score missed every top 5, so the file and row were deleted */
+    /** false when the score missed every top 5, so nothing was kept */
     kept?: boolean;
+    /** false when the score placed but the file could not be stored (Blob unavailable): the row has no download */
+    fileStored?: boolean;
     /** same as summary.score */
     rankedScore: number;
     error?: string;
